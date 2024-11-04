@@ -3,6 +3,7 @@
 Account which bundles all the functionality you need to build great crypto-powered user experiences. Requires:
 * EIP-7702 & RIP-7212 deployed on the network utilizing it.
 * [ORC-0001](https://www.ithaca.xyz/writings/orc-0001) integrated on the sequencer.
+* [EIP-5792](https://eips.ethereum.org/EIPS/eip-5792) for dapps to utilize the smart contract's capabilities.
 
 # Features out of the box
 
