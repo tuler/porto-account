@@ -13,4 +13,5 @@ Account which bundles all the functionality you need to build great crypto-power
 * Multi-factor authentication:
 * Call Batching:
 * Identity based on real-world credentials: 
+* Sponsored transactions: Either using ERC20 tokens, or subsidized by other applications.
 * Account recovery: If you've lost your device, you can always recover using your friends or your email or identity mechanism.
