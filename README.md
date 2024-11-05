@@ -9,6 +9,7 @@ Account which bundles all the functionality you need to build great crypto-power
 
 * Secure Login: Using WebAuthN-compatible credentials like PassKeys.
 * Transact on any chain: Your account lives on the same address in every chain. Transactions get filled across chains by ERC7683-compatible fillers.
+* ERC-1271 Signature Verification
 * Cheap transactions: Use BLS and L2 Optimized router contracts.
 * Access Control:
 * Multi-factor authentication:
