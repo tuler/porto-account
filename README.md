@@ -1,21 +1,29 @@
-# Account
+# <h1 align="center"> Account </h1>
 
-Account which bundles all the functionality you need to build great crypto-powered user experiences. Requires:
-* EIP-7702 & RIP-7212 deployed on the network utilizing it.
-* [ORC-0001](https://www.ithaca.xyz/writings/orc-0001) integrated on the sequencer.
-* [EIP-5792](https://eips.ethereum.org/EIPS/eip-5792) for dapps to utilize the smart contract's capabilities.
+**All-in-one EIP-7702 powered delegation contract, coupled with [Porto](https://github.com/ithacaxyz/porto)**
+
+Every app needs an account, traditionally requiring separate services for auth, payments, and recovery. Doing this in a way that empowers users with control over their funds and their data is the core challenge of the crypto space. While crypto wallets have made great strides, users still face a fragmented experience - juggling private keys, managing account balances across networks, 
+having to install browser extensions, and more.
+
+We believe that unstoppable crypto-powered accounts should be excellent throughout a user's journey:
+
+- **Onboarding**: No key management using WebAuthn and Passkeys. KYC-less fiat onramping. No kicking of the user to 3rd party applications, fully embedded experience with headless wallet.
+- **Verifying their identity**: Privacy-preserving identity verification with [ZK Passport](https://www.openpassport.app/) or other techniques.
+- **Transacting safely**: Access [control policies](b/main/src/GuardedExecutor.sol) baked in with sensible defaults in smart contracts.
+- **Transacting privately**: Built-in privacy using [stealth addresses](https://vitalik.eth.limo/general/2023/01/20/stealth.html) and [confidential transactions](https://eips.ethereum.org/EIPS/eip-4491).
+- **Transacting seamlessly across chains**: Single address with automatic gas handling across chains using [ERC7683](https://eips.ethereum.org/EIPS/eip-7683).
+- **Recovering their account**: Multi-path recovery via social, [email](https://github.com/zkemail), [OAuth](https://github.com/olehmisar/zklogin/pull/2), or other identity providers.
+- **No vendor lock-in**: No vendor lock-in, built on top of standards that have powered Ethereum for years.
 
 # Features out of the box
 
-* Secure Login: Using WebAuthN-compatible credentials like PassKeys.
-* Transact on any chain: Your account lives on the same address in every chain. Transactions get filled across chains by ERC7683-compatible fillers.
-* ERC-1271 Signature Verification
-* Upgradable: Ability for end-users to upgrade to a new version of the Account Delegation contract.
-* Counterfactual Account: Ability to batch execution into the initial 7702 auth transaction, and also sign before 7702 auth transaction (ERC-6492).
-* Cheap transactions: Use BLS and L2 Optimized router contracts.
-* Access Control:
-* Multi-factor authentication:
-* Call Batching:
-* Identity based on real-world credentials: 
-* Sponsored transactions: Either using ERC20 tokens, or subsidized by other applications.
-* Account recovery: If you've lost your device, you can always recover using your friends or your email or identity mechanism.
+* [x] Secure Login: Using WebAuthN-compatible credentials like PassKeys.
+* [x] Call Batching: Send multiple calls in 1.
+* [x] Gas Sponsorship: Allow anyone to pay for your fees in any ERC20 or ETH.
+* [x] Access Control: Whitelist receivers, function selectors and arguments.
+* [x] Session Keys: Allow transactions without confirmations if they pass low-security access control policies.
+* [ ] Multi-factor Authentication: If a call is outside of a certain access control policy, require multiple signatures.
+* [ ] Optimized for L2: Using BLS signatures.
+* [ ] Chain Abstraction: Transaction on any chain invisibly. Powered by ERC7683. WIP
+* [ ] Privacy: Using stealth addresses and confidential transactions.
+* [ ] Account Recovery & Identity: Using ZK {Email, OAUth, Passport} and more.
