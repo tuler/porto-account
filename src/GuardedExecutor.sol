@@ -3,6 +3,7 @@ pragma solidity ^0.8.23;
 
 import {ERC7821} from "solady/accounts/ERC7821.sol";
 import {LibBytes} from "solady/utils/LibBytes.sol";
+import {LibBit} from "solady/utils/LibBit.sol";
 
 contract GuardedExecutor is ERC7821 {
     ////////////////////////////////////////////////////////////////////////
@@ -12,8 +13,8 @@ contract GuardedExecutor is ERC7821 {
     /// @dev Cannot set or get the permissions if the `keyHash` is `bytes32(0)`.
     error KeyHashIsZero();
 
-    /// @dev If the `target` is `address(this)`, the `fnSel` cannot be `_EXECUTE_FN_SEL`.
-    error OnlyEOACanSelfExecute();
+    /// @dev Only the EOA itself and super admin keys can self execute.
+    error CannotSelfExecute();
 
     /// @dev Unauthorized to perform the action.
     error Unauthorized();
@@ -43,9 +44,6 @@ contract GuardedExecutor is ERC7821 {
     /// An empty calldata does not have 4 bytes for a function selector,
     /// and we will use this special value to denote empty calldata.
     bytes4 public constant EMPTY_CALLDATA_FN_SEL = 0xe0e0e0e0;
-
-    /// @dev ERC7579's `execute((address,uint256,bytes)[])` function selector.
-    bytes4 internal constant _EXECUTE_FN_SEL = 0x3f707e6b;
 
     ////////////////////////////////////////////////////////////////////////
     // Storage
@@ -94,8 +92,20 @@ contract GuardedExecutor is ERC7821 {
         virtual
         onlyThis
     {
+        // Sanity check as a key hash of `bytes32(0)` represents the EOA's key itself.
+        // The EOA is always able to call any function on itself, so there is no point
+        // setting which functions and contracts it can touch via execute.
         if (keyHash == bytes32(0)) revert KeyHashIsZero();
-        if (_isSelfExecute(target, fnSel)) revert OnlyEOACanSelfExecute();
+
+        // All calls not from the EOA itself has to go through the single `execute` function.
+        // For security, only EOA key and super admin keys can call into `execute`.
+        // Otherwise any low stakes app key can call super admin functions
+        // such as like `authorize` and `revoke`.
+        // This check is for sanity. We will still validate this in `canExecute`.
+        if (_isSelfExecute(target, fnSel)) {
+            if (!_isSuperAdmin(keyHash)) revert CannotSelfExecute();
+        }
+
         mapping(bytes32 => bool) storage c = _getGuardedExecutorStorage().canExecute;
         c[_hash(keyHash, target, fnSel)] = can;
         emit CanExecuteSet(keyHash, target, fnSel, can);
@@ -119,10 +129,17 @@ contract GuardedExecutor is ERC7821 {
         mapping(bytes32 => bool) storage c = _getGuardedExecutorStorage().canExecute;
 
         bytes4 fnSel = ANY_FN_SEL;
+        
+        // If the calldata has 4 or more bytes, we can assume that the leading 4 bytes
+        // denotes the function selector. 
         if (data.length >= 4) fnSel = bytes4(LibBytes.loadCalldata(data, 0x00));
+        
+        // If the calldata is empty, make sure that the empty calldata has been authorized.
         if (data.length == uint256(0)) fnSel = EMPTY_CALLDATA_FN_SEL;
 
-        if (_isSelfExecute(target, fnSel)) return false;
+        // This check is required to ensure that authorizing any function selector
+        // or any target will still NOT allow for self execution.
+        if (_isSelfExecute(target, fnSel)) if (!_isSuperAdmin(keyHash)) return false;
 
         if (c[_hash(keyHash, target, fnSel)]) return true;
         if (c[_hash(keyHash, ANY_TARGET, fnSel)]) return true;
@@ -140,11 +157,8 @@ contract GuardedExecutor is ERC7821 {
     ////////////////////////////////////////////////////////////////////////
 
     /// @dev Returns whether the call is a self execute.
-    function _isSelfExecute(address target, bytes4 fnSel) internal view returns (bool result) {
-        assembly ("memory-safe") {
-            // ERC7579's `execute(bytes32,bytes)` function selector is `0xe9ae5c53`.
-            result := lt(shl(96, xor(target, address())), eq(shr(224, fnSel), 0xe9ae5c53))
-        }
+    function _isSelfExecute(address target, bytes4 fnSel) internal view returns (bool) {
+        return LibBit.and(target == address(this), fnSel == ERC7821.execute.selector);
     }
 
     /// @dev Returns the hash of function.
@@ -154,10 +168,11 @@ contract GuardedExecutor is ERC7821 {
         returns (bytes32 result)
     {
         assembly ("memory-safe") {
+            // Use assembly to avoid `abi.encodePacked` overhead.
             mstore(0x00, fnSel)
             mstore(0x18, target)
             mstore(0x04, keyHash)
-            result := keccak256(0x00, 0x38)
+            result := keccak256(0x00, 0x38) // 4 + 20 + 32 = 56 = 0x38.
         }
     }
 
@@ -165,5 +180,15 @@ contract GuardedExecutor is ERC7821 {
     modifier onlyThis() virtual {
         if (msg.sender != address(this)) revert Unauthorized();
         _;
+    }
+
+    ////////////////////////////////////////////////////////////////////////
+    // Configurables
+    ////////////////////////////////////////////////////////////////////////
+
+    /// @dev To be overriden to return if `keyHash` corresponds to a super admin key.
+    function _isSuperAdmin(bytes32 keyHash) internal view virtual returns (bool) {
+        keyHash = keyHash; // Silence unused variable warning.
+        return false;
     }
 }
