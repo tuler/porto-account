@@ -18,7 +18,7 @@ import {TokenTransferLib} from "./TokenTransferLib.sol";
 /// @notice A delegation contract for EOAs with EIP7702.
 contract Delegation is EIP712, GuardedExecutor {
     using EfficientHashLib for bytes32[];
-    using EnumerableSetLib for EnumerableSetLib.Bytes32Set;
+    using EnumerableSetLib for *;
     using LibBytes for LibBytes.BytesStorage;
     using LibBitmap for LibBitmap.Bitmap;
 
@@ -63,6 +63,8 @@ contract Delegation is EIP712, GuardedExecutor {
         EnumerableSetLib.Bytes32Set keyHashes;
         /// @dev Mapping of key hash to the key in encoded form.
         mapping(bytes32 => LibBytes.BytesStorage) keyStorage;
+        /// @dev Set of approved implementations for delegate calls.
+        EnumerableSetLib.AddressSet approvedImplementations;
     }
 
     /// @dev Returns the storage pointer.
@@ -78,15 +80,6 @@ contract Delegation is EIP712, GuardedExecutor {
     // Errors
     ////////////////////////////////////////////////////////////////////////
 
-    /// @dev This feature has not been implemented yet.
-    error Unimplemented();
-
-    /// @dev The key is expired or unauthorized.
-    error KeyExpiredOrUnauthorized();
-
-    /// @dev The signature is invalid.
-    error InvalidSignature();
-
     /// @dev The key does not exist.
     error KeyDoesNotExist();
 
@@ -95,6 +88,9 @@ contract Delegation is EIP712, GuardedExecutor {
 
     /// @dev The `opData` is too short.
     error OpDataTooShort();
+
+    /// @dev There are too many approved implementations.
+    error ExceededApprovedImplementationsCapacity();
 
     ////////////////////////////////////////////////////////////////////////
     // Events
@@ -105,6 +101,9 @@ contract Delegation is EIP712, GuardedExecutor {
 
     /// @dev The key with a corresponding `keyHash` has been authorized.
     event Authorized(bytes32 indexed keyHash, Key key);
+
+    /// @dev The `implementation` has been authorized.
+    event ImplementationApprovalSet(address indexed implementation, bool isApproved);
 
     /// @dev The key with a corresponding `keyHash` has been revoked.
     event Revoked(bytes32 indexed keyHash);
@@ -124,7 +123,7 @@ contract Delegation is EIP712, GuardedExecutor {
 
     /// @dev For EIP712 signature digest calculation for the `execute` function.
     bytes32 public constant EXECUTE_TYPEHASH = keccak256(
-        "Execute(Call[] calls,uint256 nonce,uint256 nonceSalt)Call(address target,uint256 value,bytes data)"
+        "Execute(bool multichain,Call[] calls,uint256 nonce,uint256 nonceSalt)Call(address target,uint256 value,bytes data)"
     );
 
     /// @dev For EIP712 signature digest calculation for the `execute` function.
@@ -181,6 +180,22 @@ contract Delegation is EIP712, GuardedExecutor {
         emit Authorized(keyHash, key);
     }
 
+    /// @dev Sets whether `implementation` is approved to be delegate called into.
+    function setImplementationApproval(address implementation, bool isApproved)
+        public
+        virtual
+        onlyThis
+    {
+        EnumerableSetLib.AddressSet storage imps = _getDelegationStorage().approvedImplementations;
+        if (isApproved) {
+            imps.add(implementation);
+            if (imps.length() > 512) revert ExceededApprovedImplementationsCapacity();
+        } else {
+            imps.remove(implementation);
+        }
+        emit ImplementationApprovalSet(implementation, isApproved);
+    }
+
     /// @dev Invalidates the nonce.
     function invalidateNonce(uint256 nonce) public virtual onlyThis {
         _invalidateNonce(nonce);
@@ -233,11 +248,11 @@ contract Delegation is EIP712, GuardedExecutor {
         bytes memory data = _getDelegationStorage().keyStorage[keyHash].get();
         if (data.length == 0) revert KeyDoesNotExist();
         unchecked {
-            uint256 n = data.length - 7;
+            uint256 n = data.length - 7; // 5 + 1 + 1 bytes of fixed length fields.
             uint256 packed = uint56(bytes7(LibBytes.load(data, n)));
-            key.expiry = uint40(packed >> 16);
-            key.keyType = KeyType(uint8(packed >> 8));
-            key.isSuperAdmin = uint8(packed) != 0;
+            key.expiry = uint40(packed >> 16); // 5 bytes.
+            key.keyType = KeyType(uint8(packed >> 8)); // 1 byte.
+            key.isSuperAdmin = uint8(packed) != 0; // 1 byte.
             key.publicKey = LibBytes.truncate(data, n);
         }
     }
@@ -248,7 +263,19 @@ contract Delegation is EIP712, GuardedExecutor {
         return EfficientHashLib.hash(uint8(key.keyType), uint256(keccak256(key.publicKey)));
     }
 
+    /// @dev Returns whether `implementation` is approved.
+    function implementationIsApproved(address implementation) public view virtual returns (bool) {
+        return _getDelegationStorage().approvedImplementations.contains(implementation);
+    }
+
+    /// @dev Returns the list of approved implementations.
+    function approvedImplementations() public view virtual returns (address[] memory) {
+        return _getDelegationStorage().approvedImplementations.values();
+    }
+
     /// @dev Computes the EIP712 digest for `calls`, with `nonceSalt` from storage.
+    /// If the nonce is odd, the digest will be computed without the chain ID.
+    /// Otherwise, the digest will be computed with the chain ID.
     function computeDigest(Call[] calldata calls, uint256 nonce)
         public
         view
@@ -257,25 +284,25 @@ contract Delegation is EIP712, GuardedExecutor {
     {
         bytes32[] memory a = EfficientHashLib.malloc(calls.length);
         for (uint256 i; i < calls.length; ++i) {
-            Call calldata c = calls[i];
+            (address target, uint256 value, bytes calldata data) = _get(calls, i);
             a.set(
                 i,
                 EfficientHashLib.hash(
                     CALL_TYPEHASH,
-                    bytes32(uint256(uint160(c.target))),
-                    bytes32(c.value),
-                    EfficientHashLib.hashCalldata(c.data)
+                    bytes32(uint256(uint160(target))),
+                    bytes32(value),
+                    EfficientHashLib.hashCalldata(data)
                 )
             );
         }
-        return _hashTypedData(
-            EfficientHashLib.hash(
-                EXECUTE_TYPEHASH,
-                a.hash(),
-                bytes32(nonce),
-                bytes32(_getDelegationStorage().nonceSalt)
-            )
+        bytes32 structHash = EfficientHashLib.hash(
+            uint256(EXECUTE_TYPEHASH),
+            nonce & 1,
+            uint256(a.hash()),
+            nonce,
+            _getDelegationStorage().nonceSalt
         );
+        return nonce & 1 > 0 ? _hashTypedDataSansChainId(structHash) : _hashTypedData(structHash);
     }
 
     ////////////////////////////////////////////////////////////////////////
@@ -316,15 +343,11 @@ contract Delegation is EIP712, GuardedExecutor {
     // Entry Point Functions
     ////////////////////////////////////////////////////////////////////////
 
-    /// @dev Pays the entry point `paymentAmount` of `paymentToken`.
-    function payEntryPoint(address paymentToken, uint256 paymentAmount)
-        public
-        virtual
-        returns (bool)
-    {
+    /// @dev Pays `paymentAmount` of `paymentToken` to the Entry Point.
+    /// The last address argument is `onBehalfOf`, which we don't use here.
+    function payEntryPoint(address paymentToken, uint256 paymentAmount, address) public virtual {
         if (msg.sender != ENTRY_POINT) revert Unauthorized();
         TokenTransferLib.safeTransfer(paymentToken, msg.sender, paymentAmount);
-        return true;
     }
 
     /// @dev Returns if the signature is valid, along with its `keyHash`.
@@ -397,6 +420,39 @@ contract Delegation is EIP712, GuardedExecutor {
     ////////////////////////////////////////////////////////////////////////
     // ERC7821
     ////////////////////////////////////////////////////////////////////////
+
+    /// @dev Override to allow for a delegate call workflow.
+    /// Any implementation contract used in the delegate call workflow must be approved first.
+    function execute(bytes32 mode, bytes calldata executionData) public payable virtual override {
+        // ERC7579 designates `mode[0]` to denote the call mode, and delegate call is `0xff`.
+        if (bytes1(mode) == 0xff) {
+            // ERC7579 defines the delegate call encoding as `abi.encodePacked(implementation,data)`.
+            address target = address(bytes20(LibBytes.loadCalldata(executionData, 0x00)));
+            bytes calldata data = LibBytes.sliceCalldata(executionData, 0x14);
+            if (!_getDelegationStorage().approvedImplementations.contains(target)) {
+                revert Unauthorized();
+            }
+            assembly ("memory-safe") {
+                let m := mload(0x40)
+                calldatacopy(m, data.offset, data.length)
+                if iszero(delegatecall(gas(), target, m, data.length, codesize(), 0x00)) {
+                    returndatacopy(m, 0x00, returndatasize())
+                    revert(m, returndatasize())
+                }
+            }
+            return;
+        }
+        super.execute(mode, executionData);
+    }
+
+    /// @dev Supported modes:
+    /// - `0x01000000000000000000...`: Single batch. Does not support optional `opData`.
+    /// - `0x01000000000078210001...`: Single batch. Supports optional `opData`.
+    /// - `0x01000000000078210002...`: Batch of batches.
+    /// - `0xff000000000000000000...`: Delegate call.
+    function supportsExecutionMode(bytes32 mode) public view virtual override returns (bool) {
+        return LibBit.or(bytes1(mode) == 0xff, super.supportsExecutionMode(mode));
+    }
 
     /// @dev For ERC7821.
     function _execute(bytes32, bytes calldata, Call[] calldata calls, bytes calldata opData)
