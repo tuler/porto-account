@@ -12,13 +12,12 @@ import {P256} from "solady/utils/P256.sol";
 import {WebAuthn} from "solady/utils/WebAuthn.sol";
 import {LibStorage} from "solady/utils/LibStorage.sol";
 import {EnumerableSetLib} from "solady/utils/EnumerableSetLib.sol";
-import {CallContextChecker} from "solady/utils/CallContextChecker.sol";
 import {GuardedExecutor} from "./GuardedExecutor.sol";
 import {TokenTransferLib} from "./TokenTransferLib.sol";
 
 /// @title Delegation
 /// @notice A delegation contract for EOAs with EIP7702.
-contract Delegation is EIP712, GuardedExecutor, CallContextChecker {
+contract Delegation is EIP712, GuardedExecutor {
     using EfficientHashLib for bytes32[];
     using EnumerableSetLib for *;
     using LibBytes for LibBytes.BytesStorage;
@@ -362,7 +361,7 @@ contract Delegation is EIP712, GuardedExecutor, CallContextChecker {
     }
 
     /// @dev Computes the EIP712 digest for `calls`, with `nonceSalt` from storage.
-    /// If the nonce is odd, the digest will be computed without the chain ID.
+    /// If the nonce is odd, the digest will be computed without the chain ID and with a zero nonce salt.
     /// Otherwise, the digest will be computed with the chain ID.
     function computeDigest(Call[] calldata calls, uint256 nonce)
         public
@@ -388,7 +387,7 @@ contract Delegation is EIP712, GuardedExecutor, CallContextChecker {
             nonce & 1,
             uint256(a.hash()),
             nonce,
-            _getDelegationStorage().nonceSalt
+            nonce & 1 > 0 ? 0 : _getDelegationStorage().nonceSalt
         );
         return nonce & 1 > 0 ? _hashTypedDataSansChainId(structHash) : _hashTypedData(structHash);
     }
@@ -538,7 +537,6 @@ contract Delegation is EIP712, GuardedExecutor, CallContextChecker {
         if (!$.approvedImplementations.contains(target)) {
             revert Unauthorized();
         }
-        _checkOnlyEIP7702Authority();
         if (msg.sender != address(this)) {
             if (!_getApprovedImplementationCallers(target).contains(msg.sender)) {
                 revert Unauthorized();
