@@ -155,8 +155,17 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
 
     /// @dev Holds the storage.
     struct EntryPointStorage {
+        /// @dev Mapping of (`eoa`, `seqKey`) to nonce sequence.
+        /// We use a `LibStorage.Ref` instead of a uint64 for performance.
         mapping(address => mapping(uint192 => LibStorage.Ref)) nonceSeqs;
+        /// @dev Mapping of (`eoa`, `nonce`) to the error selector.
+        /// If `uint64(nonce) < nonceSeqs[eoa][uint192(nonce >> 64)]`,
+        /// it means that the nonce has either been used or invalidated,
+        /// and a non-zero error selector denotes an error.
+        /// Otherwise, if `uint64(nonce) >= nonceSeqs[eoa][uint192(nonce >> 64)]`,
+        /// we would expect that the error selector is zero (i.e. uninitialized).
         mapping(address => mapping(uint256 => bytes4)) errs;
+        /// @dev A bitmap to mark ERC7683 order IDs as filled, to prevent filling replays.
         LibBitmap.Bitmap filledOrderIds;
     }
 
@@ -265,6 +274,11 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
                 revert InsufficientGas();
             }
 
+            // Verify and invalidate the nonce.
+            // The nonce will be invalidated even if the UserOp fails.
+            // Otherwise, an attacker can keep replaying the UserOp to take payment and drain the user.
+            // EntryPoint UserOp nonce bookkeeping is stored on the EntryPoint itself
+            // to make implementing this nonce-invalidation pattern more performant.
             uint256 nonce = u.nonce;
             uint256 seq = _getEntryPointStorage().nonceSeqs[u.eoa][uint192(nonce >> 64)].value++;
             if (seq != uint64(nonce)) err = InvalidNonce.selector;
@@ -318,20 +332,18 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
         // If we have overpaid, then refund `paymentAmount - paymentAmountForGas`.
 
         gUsed = Math.rawSub(gStart, gasleft());
-        uint256 paymentPerGas = u.paymentPerGas;
-        if (paymentPerGas == uint256(0)) paymentPerGas = type(uint256).max;
+        uint256 paymentPerGas = Math.coalesce(u.paymentPerGas, type(uint256).max);
         uint256 finalPaymentAmount = Math.min(
             paymentAmount, Math.saturatingMul(paymentPerGas, Math.saturatingAdd(gUsed, _REFUND_GAS))
         );
-        address paymentRecipient = u.paymentRecipient;
-        if (paymentRecipient == address(0)) paymentRecipient = address(this);
+        address paymentRecipient = Math.coalesce(u.paymentRecipient, address(this));
         if (LibBit.and(finalPaymentAmount != 0, paymentRecipient != address(this))) {
             TokenTransferLib.safeTransfer(u.paymentToken, paymentRecipient, finalPaymentAmount);
         }
         if (paymentAmount > finalPaymentAmount) {
             TokenTransferLib.safeTransfer(
                 u.paymentToken,
-                u.payer == address(0) ? u.eoa : u.payer,
+                Math.coalesce(u.payer, u.eoa),
                 Math.rawSub(paymentAmount, finalPaymentAmount)
             );
         }
@@ -436,7 +448,7 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
             TokenTransferLib.balanceOf(paymentToken, address(this)), paymentAmount
         );
         address eoa = u.eoa;
-        address payer = u.payer == address(0) ? eoa : u.payer;
+        address payer = Math.coalesce(u.payer, eoa);
         if (paymentAmount > u.paymentMaxAmount) {
             revert PaymentError();
         }
