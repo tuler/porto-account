@@ -120,6 +120,12 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
     /// @dev The nonce sequence of `eoa` is incremented.
     event NonceInvalidated(address indexed eoa, uint256 nonce);
 
+    /// @dev Emitted when a UserOp is executed.
+    /// This event replaces `NonceInvalidated` in the `execute` function.
+    /// It serves to signal that `nonce` has been invalidated,
+    /// while also emitting the `err` in a single event.
+    event UserOpExecuted(address indexed eoa, uint256 nonce, bytes4 err);
+
     ////////////////////////////////////////////////////////////////////////
     // Constants
     ////////////////////////////////////////////////////////////////////////
@@ -325,6 +331,8 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
                 break
             }
         }
+
+        emit UserOpExecuted(u.eoa, u.nonce, err);
 
         // Refund strategy:
         // `totalAmountOfGasToPayFor = gasUsedThusFar + _REFUND_GAS`.
