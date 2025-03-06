@@ -7,6 +7,7 @@ import {LibBytes} from "solady/utils/LibBytes.sol";
 import {GasBurnerLib} from "solady/utils/GasBurnerLib.sol";
 import {P256} from "solady/utils/P256.sol";
 import {LibSort} from "solady/utils/LibSort.sol";
+import {FixedPointMathLib as Math} from "solady/utils/FixedPointMathLib.sol";
 import {Delegation} from "../src/Delegation.sol";
 import {EntryPoint, MockEntryPoint} from "./utils/mocks/MockEntryPoint.sol";
 import {ERC20, MockPaymentToken} from "./utils/mocks/MockPaymentToken.sol";
@@ -943,5 +944,58 @@ contract EntryPointTest is SoladyTest {
         op.signature = abi.encodePacked(abi.encodePacked(r, s, v), eoa.hash(key), bytes32(0x00));
 
         ep.execute(abi.encode(op));
+    }
+
+    function testInvalidateNonce(uint96 seqKey, uint64 seq, uint64 seq2) public {
+        uint256 nonce = (uint256(seqKey) << 64) | uint256(seq);
+        EntryPoint.UserOp memory u;
+        uint256 privateKey;
+        (u.eoa, privateKey) = _randomSigner();
+        vm.etch(u.eoa, delegation.code);
+
+        vm.startPrank(u.eoa);
+        if (seq == type(uint64).max) {
+            ep.invalidateNonce(nonce);
+            assertEq(ep.getNonce(u.eoa, seqKey), nonce);
+            return;
+        }
+
+        ep.invalidateNonce(nonce);
+        assertEq(ep.getNonce(u.eoa, seqKey), nonce + 1);
+
+        if (_randomChance(2)) {
+            uint256 nonce2 = (uint256(seqKey) << 64) | uint256(seq2);
+            if (seq2 < uint64(ep.getNonce(u.eoa, seqKey))) {
+                vm.expectRevert(EntryPoint.NewSequenceMustBeLarger.selector);
+                ep.invalidateNonce(nonce2);
+            } else {
+                ep.invalidateNonce(nonce2);
+                assertEq(
+                    uint64(ep.getNonce(u.eoa, seqKey)), Math.min(uint256(seq2) + 1, 2 ** 64 - 1)
+                );
+            }
+            if (uint64(ep.getNonce(u.eoa, seqKey)) == type(uint64).max) return;
+            seq = seq2;
+        }
+
+        vm.deal(u.eoa, 2 ** 128 - 1);
+        u.executionData = _getExecutionDataForThisTargetFunction(
+            _bound(_random(), 0, 2 ** 32 - 1), _truncateBytes(_randomBytes(), 0xff)
+        );
+        u.nonce = ep.getNonce(u.eoa, seqKey);
+        paymentToken.mint(u.eoa, 2 ** 128 - 1);
+        u.paymentToken = address(paymentToken);
+        u.paymentAmount = _bound(_random(), 0, 2 ** 32 - 1);
+        u.paymentMaxAmount = u.paymentAmount;
+        u.combinedGas = 10000000;
+        _fillSecp256k1Signature(u, privateKey, bytes32(0x00));
+
+        bytes4 err = ep.execute(abi.encode(u));
+
+        if (seq > type(uint64).max - 2) {
+            assertEq(err, EntryPoint.InvalidNonce.selector);
+        } else {
+            assertEq(err, 0);
+        }
     }
 }
