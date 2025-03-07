@@ -198,6 +198,14 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
     }
 
     ////////////////////////////////////////////////////////////////////////
+    // Constructor
+    ////////////////////////////////////////////////////////////////////////
+
+    constructor(address initialOwner) payable {
+        _initializeOwner(initialOwner);
+    }
+
+    ////////////////////////////////////////////////////////////////////////
     // Main
     ////////////////////////////////////////////////////////////////////////
 
@@ -388,29 +396,31 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
             if ((combinedGasOverride >> 255) & 1 != 0) return (0, 0);
         }
 
-        bool s; // Denotes whether the self call is successful.
+        bool selfCallSuccess;
         assembly ("memory-safe") {
             let m := mload(0x40) // Grab the free memory pointer.
             // Copy the encoded user op to the memory to be ready to pass to the self call.
             calldatacopy(add(m, 0x40), encodedUserOp.offset, encodedUserOp.length)
 
             // We'll use assembly for frequently used call related stuff to save massive memory gas.
-            mstore(m, 0xf427f8da) // `_payVerifyAndCall()`.
+            mstore(m, 0x00000000) // `selfCallPayVerifyCall537021665()`.
             mstore(add(m, 0x20), shr(254, combinedGasOverride)) // Whether it's a gas simulation.
             mstore(0x00, 0) // Zeroize the return slot.
 
             // To prevent griefing, we need to do a non-reverting gas-limited self call.
             // If the self call is successful, we know that the payment has been made,
             // and the sequence for `nonce` has been incremented.
-            s := call(g, address(), 0, add(m, 0x1c), add(encodedUserOp.length, 0x44), 0x00, 0x40)
+            // For more information, see `selfCallPayVerifyCall537021665()`.
+            selfCallSuccess :=
+                call(g, address(), 0, add(m, 0x1c), add(encodedUserOp.length, 0x44), 0x00, 0x40)
             err := mload(0x00) // The self call will do another self call to execute.
-            paymentAmount := mload(0x20) // Only used when `s` is true.
-            if iszero(s) { if iszero(err) { err := shl(224, 0xad4db224) } } // `VerifiedCallError()`.
+            paymentAmount := mload(0x20) // Only used when `selfCallSuccess` is true.
+            if iszero(selfCallSuccess) { if iszero(err) { err := shl(224, 0xad4db224) } } // `VerifiedCallError()`.
         }
 
-        emit UserOpExecuted(u.eoa, u.nonce, s, err);
+        emit UserOpExecuted(u.eoa, u.nonce, selfCallSuccess, err);
 
-        if (s) {
+        if (selfCallSuccess) {
             // Refund strategy:
             // `totalAmountOfGasToPayFor = gasUsedThusFar + _REFUND_GAS`.
             // `paymentAmountForGas = paymentPerGas * totalAmountOfGasToPayFor`.
@@ -441,6 +451,93 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
             // incentivizing relayers to submit UserOps when they are likely to succeed.
             if (err != 0) _getEntryPointStorage().errs[u.eoa][u.nonce] = err;
         }
+    }
+
+    /// @dev This function is only intended for self-call.
+    /// The name is mined to give a function selector of `0x00000000`, which makes it
+    /// more efficient to call by placing it at the leftmost part of the function dispatch tree.
+    ///
+    /// We perform a gas-limited self-call to this function via `_execute(bytes,uint256)`
+    /// with assembly for the following reasons:
+    /// - Allow recovery from out-of-gas errors.
+    ///   When a transaction is actually mined, an `executionData` payload that takes 100k gas
+    ///   to execute during simulation might require 1M gas to actually execute.
+    ///   If we do simply let this consume all gas, then the relayer's compensation
+    ///   which is determined to be sufficient during simulation might not be actually sufficient.
+    ///   We can only know how much gas a payload costs by actually executing it, but once it
+    ///   has been executed, the gas burned cannot be returned and will be debited from the relayer.
+    /// - Avoid the overheads of `abi.encode`, `abi.decode`, and memory allocation.
+    ///   Doing `(bool success, bytes memory result) = address(this).call(abi.encodeCall(...))`
+    ///   incurs unnecessary ABI encoding, decoding, and memory allocation.
+    ///   Quadratic memory expansion costs will make UserOps in later parts of a batch
+    ///   unfairly punished, while making gas estimates unreliable.
+    /// - For even more efficiency, we directly rip the UserOp from the calldata instead
+    ///   of making it as an argument to this function.
+    ///
+    /// This function reverts if the PREP initialization or the UserOp validation fails.
+    /// This is to prevent incorrect compensation (the UserOp's signature defines what is correct).
+    function selfCallPayVerifyCall537021665() public payable {
+        require(msg.sender == address(this));
+
+        UserOp calldata u;
+        bytes32 isGasSimulation;
+        assembly ("memory-safe") {
+            u := add(0x24, calldataload(0x24))
+            isGasSimulation := calldataload(0x04)
+        }
+        // Verify the nonce, early reverting to save gas.
+        (LibStorage.Ref storage s, uint256 seq) =
+            LibNonce.check(_getEntryPointStorage().nonceSeqs[u.eoa], u.nonce);
+
+        // If `_initializePREP` or `_verify` is invalid, just revert the payment.
+        // There's a chicken and egg problem:
+        // Validation of the UserOp is needed to ensure that `_pay` deducts correctly,
+        // but `_verify` costs variable amount of gas.
+        // Suggestion: the UserOp is simulated off-chain to ensure that it passes.
+        // Minimize surface area and chance of griefing.
+        // If somehow `_verify` is griefed, up to relayer to ban the user.
+        _initializePREP(u);
+        (bool isValid, bytes32 keyHash) = _verify(u);
+        if (!isValid) if (isGasSimulation == 0) revert VerificationError();
+
+        uint256 paymentAmount = _pay(u);
+
+        // Once the payment has been made, the nonce must be invalidated.
+        // Otherwise, an attacker can keep replaying the UserOp to take payment and drain the user.
+        // EntryPoint UserOp nonce bookkeeping is stored on the EntryPoint itself
+        // to make implementing this nonce-invalidation pattern more performant.
+        s.value = Math.rawAdd(seq, 1);
+
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            calldatacopy(add(m, 0x1c), 0x00, calldatasize())
+            mstore(m, 0x00000001) // `selfCallExecute328974934()`.
+            mstore(add(m, 0x20), keyHash)
+            mstore(0x00, 0) // Zeroize the return slot.
+            // `selfCallExecute328974934()` returns nothing on success.
+            // If it reverts, the error selector will be written to `0x00`.
+            if iszero(call(gas(), address(), 0, add(m, 0x1c), calldatasize(), 0x00, 0x20)) {
+                // Just in case the self-call fails and returns nothing.
+                if iszero(mload(0x00)) { mstore(0x00, shl(224, 0x6c9d47e8)) } // `CallError()`.
+            }
+            mstore(0x20, paymentAmount)
+            return(0x00, 0x40)
+        }
+    }
+
+    /// @dev This function is only intended for self-call.
+    /// The name is mined to give a function selector of `0x00000001`.
+    /// For the rationale of this design, see `selfCallPayVerifyCall537021665()`.
+    function selfCallExecute328974934() public payable {
+        require(msg.sender == address(this));
+
+        UserOp calldata u;
+        bytes32 keyHash;
+        assembly ("memory-safe") {
+            u := add(0x24, calldataload(0x24))
+            keyHash := calldataload(0x04)
+        }
+        _execute(u, keyHash, false);
     }
 
     ////////////////////////////////////////////////////////////////////////
@@ -515,15 +612,6 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
     ////////////////////////////////////////////////////////////////////////
     // Internal Helpers
     ////////////////////////////////////////////////////////////////////////
-
-    // Self call functions
-    // -------------------
-    // For these self call functions, we shall use the `fallback`.
-    // This is so that they can be hidden from the public api,
-    // and for facilitating unit testing via a mock.
-    //
-    // All write self call functions must be guarded with a
-    // `require(msg.sender == address(this))` in the fallback.
 
     /// @dev Makes the `eoa` perform a payment to the `entryPoint`.
     /// This reverts if the payment is insufficient or fails. Otherwise returns nothing.
@@ -674,79 +762,7 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
         }
     }
 
-    ////////////////////////////////////////////////////////////////////////
-    // Fallback
-    ////////////////////////////////////////////////////////////////////////
-
     receive() external payable virtual {}
-
-    /// @dev Use the fallback function to implement gas limited verification and execution.
-    /// Helps avoid unnecessary calldata decoding.
-    fallback() external payable virtual {
-        UserOp calldata u;
-        bytes32 w;
-        assembly ("memory-safe") {
-            u := add(0x24, calldataload(0x24))
-            w := calldataload(0x04)
-        }
-        uint256 fnSel = uint32(bytes4(msg.sig));
-        // `_payVerifyAndCall()`.
-        if (fnSel == 0xf427f8da) {
-            require(msg.sender == address(this));
-            // Verify the nonce, early reverting to save gas.
-            (LibStorage.Ref storage s, uint256 seq) =
-                LibNonce.check(_getEntryPointStorage().nonceSeqs[u.eoa], u.nonce);
-
-            // If `_initializePREP` or `_verify` is invalid, just revert the payment.
-            // There's a chicken and egg problem:
-            // Validation of the UserOp is needed to ensure that `_pay` deducts correctly,
-            // but `_verify` costs variable amount of gas.
-            // Suggestion: the UserOp is simulated off-chain to ensure that it passes.
-            // Minimize surface area and chance of griefing.
-            // If somehow `_verify` is griefed, up to relayer to ban the user.
-            _initializePREP(u);
-            (bool isValid, bytes32 keyHash) = _verify(u);
-            if (!isValid) if (w == 0) revert VerificationError();
-
-            uint256 paymentAmount = _pay(u);
-
-            // Once the payment has been made, the nonce must be invalidated.
-            // Otherwise, an attacker can keep replaying the UserOp to take payment and drain the user.
-            // EntryPoint UserOp nonce bookkeeping is stored on the EntryPoint itself
-            // to make implementing this nonce-invalidation pattern more performant.
-            s.value = Math.rawAdd(seq, 1);
-
-            assembly ("memory-safe") {
-                let m := mload(0x40)
-                calldatacopy(add(m, 0x1c), 0x00, calldatasize())
-                mstore(m, 0x420aadb8) // `_execute()`.
-                mstore(add(m, 0x20), keyHash)
-                mstore(0x00, 0) // Zeroize the return slot.
-
-                pop(call(gas(), address(), 0, add(m, 0x1c), calldatasize(), 0x00, 0x20))
-                mstore(0x20, paymentAmount)
-                return(0x00, 0x40)
-            }
-        }
-        // `_execute()`.
-        if (fnSel == 0x420aadb8) {
-            require(msg.sender == address(this));
-            _execute(u, w, false);
-            return;
-        }
-        // `_initializeOwner()`.
-        if (fnSel == 0xfc90218d) {
-            _checkOnlyProxy();
-            if (owner() != address(0)) return; // Prevent reinitialization if there's owner.
-            address newOwner;
-            assembly ("memory-safe") {
-                newOwner := calldataload(0x04)
-            }
-            _initializeOwner(newOwner);
-            return;
-        }
-        revert FnSelectorNotRecognized();
-    }
 
     ////////////////////////////////////////////////////////////////////////
     // Only Owner Functions
