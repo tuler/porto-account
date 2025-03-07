@@ -111,6 +111,42 @@ contract DelegationTest is BaseTest {
         assertEq(d.d.approvedSignatureCheckers(k.keyHash).length, 0);
     }
 
+    struct _TestUpgradeDelegationWithPassKeyTemps {
+        uint256 randomVersion;
+        address implementation;
+        ERC7821.Call[] calls;
+        uint256 nonce;
+        bytes opData;
+        bytes executionData;
+    }
+
+    function testUpgradeDelegationWithPassKey(bytes32) public {
+        DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
+        PassKey memory k = _randomSecp256k1PassKey();
+
+        k.k.isSuperAdmin = true;
+
+        vm.prank(d.eoa);
+        d.d.authorize(k.k);
+
+        _TestUpgradeDelegationWithPassKeyTemps memory t;
+        t.randomVersion = _randomUniform();
+        t.implementation = address(new MockSampleDelegateCallTarget(t.randomVersion));
+
+        t.calls = new ERC7821.Call[](1);
+        t.calls[0].data =
+            abi.encodeWithSignature("upgradeProxyDelegation(address)", t.implementation);
+
+        t.nonce = d.d.getNonce(0);
+        bytes memory signature = _sig(d, d.d.computeDigest(t.calls, t.nonce));
+        t.opData = abi.encodePacked(t.nonce, signature);
+        t.executionData = abi.encode(t.calls, t.opData);
+
+        d.d.execute(_ERC7821_BATCH_EXECUTION_MODE, t.executionData);
+
+        assertEq(MockSampleDelegateCallTarget(d.eoa).version(), t.randomVersion);
+    }
+
     function testExecuteDelegateCall(bytes32) public {
         DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
 
@@ -164,7 +200,21 @@ contract DelegationTest is BaseTest {
             assertEq(vm.load(d.eoa, keccak256("hehe")), specialStorageValue);
         } while (_randomChance(64));
 
-        if (_randomChance(2)) {
+        if (_randomChance(8)) {
+            bytes memory data = _truncateBytes(_randomBytes(), 0xff);
+            vm.prank(callers[_randomUniform() % callers.length]);
+            (bool success, bytes memory result) = d.eoa.call(
+                abi.encodeWithSignature(
+                    "execute(bytes32,bytes)",
+                    _ERC7579_DELEGATE_CALL_MODE,
+                    abi.encodePacked(
+                        implementation, abi.encodeWithSignature("revertWithData(bytes)", data)
+                    )
+                )
+            );
+            assertFalse(success);
+            assertEq(result, abi.encodeWithSignature("ErrorWithData(bytes)", data));
+        } else if (_randomChance(2)) {
             vm.prank(d.eoa);
             d.d.setImplementationApproval(implementation, false);
 
