@@ -107,15 +107,15 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
     error OrderAlreadyFilled();
 
     /// @dev For returning the gas used and the error from a simulation.
-    /// For the meaning of the returned variables, see `simulateExecute`.
-    error SimulationResult(uint256 gUsed, bytes4 err);
+    /// For the meaning of the returned variables, see `selfCallSimulateExecute565348489`.
+    error SelfCallSimulationResult(uint256 gUsed, bytes4 err);
 
     /// @dev For returning the gas required and the error from a simulation.
-    /// For the meaning of the returned variables, see `simulateExecute2`.
-    error SimulationResult2(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
+    /// For the meaning of the returned variables, see `simulateExecute`.
+    error SimulationResult(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
 
     /// @dev The simulate execute 2 run has failed. Try passing in more gas to the simulation.
-    error SimulateExecute2Failed();
+    error SimulateExecuteFailed();
 
     /// @dev No revert has been encountered.
     error NoRevertEncoutered();
@@ -245,7 +245,7 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
 
     /// @dev This function does not actually execute.
     /// It simulates an execution and reverts with
-    /// `SimulationResult2(gExecute, gCombined, gUsed, err)`:
+    /// `SimulationResult(gExecute, gCombined, gUsed, err)`:
     /// - `gExecute` is the recommended amount of gas to pass into execute.
     ///    This does not include the minimum transaction overhead of 21k gas.
     ///    You will need to add that in.
@@ -266,8 +266,8 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
     ///   For most accurate metering, the signatures should be actual signatures,
     ///   but signed by a different private key of the same key type.
     ///   For simulations, we want to avoid early returns for trivially invalid signatures.
-    function simulateExecute2(bytes calldata encodedUserOp) public payable virtual {
-        bytes memory data = abi.encodeCall(this.simulateExecute, encodedUserOp);
+    function simulateExecute(bytes calldata encodedUserOp) public payable virtual {
+        bytes memory data = abi.encodeCall(this.selfCallSimulateExecute565348489, encodedUserOp);
         uint256 gExecute = gasleft();
         uint256 gCombined;
         uint256 gUsed;
@@ -276,10 +276,10 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
             function callSimulateExecute(g_, data_) -> _success {
                 calldatacopy(0x00, calldatasize(), 0x40) // Zeroize the memory for the return data.
                 pop(call(g_, address(), 0, add(data_, 0x20), mload(data_), 0x00, 0x40))
-                _success := eq(shr(224, mload(0x00)), 0xb6013686) // `SimulationResult(uint256,bytes4)`.
+                _success := eq(shr(224, mload(0x00)), 0x3d988679)
             }
-            function revertSimulateExecute2Failed() {
-                mstore(0x00, 0x0fdb7b86) // `SimulateExecute2Failed()`.
+            function revertSimulateExecuteFailed() {
+                mstore(0x00, 0x234e352e) // `SimulateExecuteFailed()`.
                 revert(0x1c, 0x04)
             }
 
@@ -287,7 +287,7 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
             // simulation to skip the invalid signature revert and also the 63/64 rule revert.
             // Also use `2**96 - 1` as the `combinedGas` for the very first call to `_execute`.
             sstore(_COMBINED_GAS_OVERRIDE_SLOT, or(shl(254, 1), 0xffffffffffffffffffffffff))
-            if iszero(callSimulateExecute(gas(), data)) { revertSimulateExecute2Failed() }
+            if iszero(callSimulateExecute(gas(), data)) { revertSimulateExecuteFailed() }
             gUsed := mload(0x04)
             err := mload(0x24)
             // If the UserOp results in a successful execution, let's try to determine
@@ -297,7 +297,7 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
                 sstore(_COMBINED_GAS_OVERRIDE_SLOT, not(0))
                 // We need to use a reverting simulation call to measure the verification gas,
                 // as it resets warm address and storage access.
-                if iszero(callSimulateExecute(gas(), data)) { revertSimulateExecute2Failed() }
+                if iszero(callSimulateExecute(gas(), data)) { revertSimulateExecuteFailed() }
 
                 // Heuristic: if the verification gas is > 60k, assume it is P256 verification
                 // without the precompile, which has quite a large variance in verification gas.
@@ -307,7 +307,7 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
                     // Now that we are trying to hone in onto a good estimate for `combinedGas`, we
                     // still want to skip the invalid signature revert and also the 63/64 rule revert.
                     sstore(_COMBINED_GAS_OVERRIDE_SLOT, or(shl(254, 1), gCombined))
-                    if iszero(callSimulateExecute(gas(), data)) { revertSimulateExecute2Failed() }
+                    if iszero(callSimulateExecute(gas(), data)) { revertSimulateExecuteFailed() }
                     if iszero(mload(0x24)) { break } // If `err` is zero, we've found the `gCombined`.
                 }
                 // Setting the `1 << 255` bit tells `_execute` to early return,
@@ -322,26 +322,42 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
                 gExecute := add(gExecute, 500)
             }
         }
-        revert SimulationResult2(gExecute, gCombined, gUsed, err);
+        revert SimulationResult(gExecute, gCombined, gUsed, err);
     }
 
-    /// @dev This function does not actually execute.
-    /// It simulates an execution and reverts with `SimulationResult(gUsed, err)`.
+    /// @dev This function is intended for self-call via `simulateExecute`.
+    /// The name is mined to give a function selector of `0xffffffff`, which makes it
+    /// least efficient to call by placing it at the rightmost part of the function dispatch tree.
+    /// As this is only for simulation purposes, it does not need to be efficient.
+    ///
+    /// Simply calling this function to get `gUsed` is NOT enough in production.
+    /// It is NOT sufficient to simply estimate `gExecute` as `gUsed * a + b; a > 1 && b > 0`.
+    /// Gas is burned at varying call depths, applying the 63/64 rule at different multiples
+    /// to different segments of the gas burned. `gExecute` is NOT a constant multiple of `gUsed`.
+    /// The only generalized reliable way to predict `gCombined` and `gExecute` is to
+    /// try and error gas-limited self-calls via `simulateExecute` to this function.
+    ///
+    /// This function does not actually execute.
+    /// It simulates an execution and reverts with `SelfCallSimulationResult(gUsed, err)`.
     /// This function requires that `combinedGas` be set to a high enough value.
     /// Notes:
     /// - `gUsed` is the amount of gas that has been eaten.
     /// - `err` is the error selector from the simulation.
     ///   If the `err` is non-zero, it means that the simulation with `gExecute`
     ///   has not resulted in a success execution.
-    function simulateExecute(bytes calldata encodedUserOp) public payable virtual {
+    function selfCallSimulateExecute565348489(bytes calldata encodedUserOp)
+        public
+        payable
+        virtual
+    {
         uint256 g = LibStorage.ref(_COMBINED_GAS_OVERRIDE_SLOT).value;
         if (g == type(uint256).max) {
             uint256 gVerifyStart = gasleft();
             _verify(_extractUserOp(encodedUserOp));
-            revert SimulationResult(Math.rawSub(gVerifyStart, gasleft()), 0);
+            revert SelfCallSimulationResult(Math.rawSub(gVerifyStart, gasleft()), 0);
         }
         (uint256 gUsed, bytes4 err) = _execute(encodedUserOp, g);
-        revert SimulationResult(gUsed, err);
+        revert SelfCallSimulationResult(gUsed, err);
     }
 
     /// @dev This function is provided for debugging purposes.
