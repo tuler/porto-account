@@ -187,6 +187,9 @@ contract GuardedExecutor is ERC7821 {
     ///    will be added to the spent limit.
     /// 2. Any token that is granted a non-zero approval will have the approval
     ///    reset to zero after the calls.
+    /// 3. The spend limits are only incremented and checked against at the end of a batch.
+    ///    If there are calls to `setSpendLimit` or `removeSpendLimit`, the final spend limits at
+    ///    the end of the batch will be applied. Calls to `removeSpendLimit` will reset the spent.
     /// Note: Called internally in ERC7821, which coalesce zero-address `target`s to `address(this)`.
     function _execute(Call[] calldata calls, bytes32 keyHash) internal virtual override {
         // If self-execute, don't care about the spend permissions.
@@ -197,6 +200,8 @@ contract GuardedExecutor is ERC7821 {
 
         // Collect all ERC20 tokens that need to be guarded,
         // and initialize their transfer amounts as zero.
+        // Used for the check on their before and after balances, in case the batch calls
+        // some contract that is authorized to transfer out tokens on behalf of the eoa.
         uint256 n = spends.tokens.length();
         for (uint256 i; i < n; ++i) {
             address token = spends.tokens.at(i);
@@ -217,7 +222,6 @@ contract GuardedExecutor is ERC7821 {
             uint32 fnSel = uint32(bytes4(LibBytes.loadCalldata(data, 0x00)));
             // `transfer(address,uint256)`.
             if (fnSel == 0xa9059cbb) {
-                if (!spends.tokens.contains(target)) continue;
                 t.erc20s.p(target);
                 t.transferAmounts.p(LibBytes.loadCalldata(data, 0x24)); // `amount`.
             }
@@ -225,7 +229,6 @@ contract GuardedExecutor is ERC7821 {
             // We have to revoke any new approvals after the batch, else a bad app can
             // leave an approval to let them drain unlimited tokens after the batch.
             if (fnSel == 0x095ea7b3) {
-                if (!spends.tokens.contains(target)) continue;
                 if (LibBytes.loadCalldata(data, 0x24) == 0) continue; // `amount == 0`.
                 t.approvedERC20s.p(target);
                 t.approvalSpenders.p(LibBytes.loadCalldata(data, 0x04)); // `spender`.
@@ -240,8 +243,14 @@ contract GuardedExecutor is ERC7821 {
                 t.permit2ERC20s.p(LibBytes.loadCalldata(data, 0x04)); // `token`.
                 t.permit2Spenders.p(LibBytes.loadCalldata(data, 0x24)); // `spender`.
             }
+            // `setSpendLimit(bytes32,address,uint8,uint256)`.
+            if (fnSel == 0x598daac4) {
+                if (target != address(this)) continue;
+                if (LibBytes.loadCalldata(data, 0x04) != keyHash) continue;
+                t.erc20s.p(LibBytes.loadCalldata(data, 0x24)); // `token`.
+                t.transferAmounts.p(uint256(0));
+            }
         }
-        _incrementSpent(spends.spends[address(0)], totalNativeSpend);
 
         // Sum transfer amounts, grouped by the ERC20s. In-place.
         LibSort.groupSum(t.erc20s.data, t.transferAmounts.data);
@@ -256,12 +265,18 @@ contract GuardedExecutor is ERC7821 {
         // Perform the batch execution.
         ERC7821._execute(calls, keyHash);
 
+        // Perform after the `_execute`, so that in the case where `calls`
+        // contain a `setSpendLimit`, it will affect the `_incrementSpent`.
+        // `_incrementSpent` is an no-op if the token does not have an active spend limit.
+        _incrementSpent(spends.spends[address(0)], totalNativeSpend);
+
         // Increments the spent amounts.
         for (uint256 i; i < t.erc20s.length(); ++i) {
             address token = t.erc20s.getAddress(i);
-            uint256 balance = SafeTransferLib.balanceOf(token, address(this));
+            TokenSpendStorage storage tokenSpends = spends.spends[token];
+            if (tokenSpends.periods.length() == uint256(0)) continue;
             _incrementSpent(
-                spends.spends[token],
+                tokenSpends,
                 // While we can actually just use the difference before and after,
                 // we also want to let the sum of the transfer amounts in the calldata to be capped.
                 // This prevents tokens to be used as flash loans, and also handles cases
@@ -269,21 +284,24 @@ contract GuardedExecutor is ERC7821 {
                 // There is no strict definition on what constitutes spending,
                 // and we want to be as conservative as possible.
                 Math.max(
-                    t.transferAmounts.get(i), Math.saturatingSub(balancesBefore.get(i), balance)
+                    t.transferAmounts.get(i),
+                    Math.saturatingSub(
+                        balancesBefore.get(i), SafeTransferLib.balanceOf(token, address(this))
+                    )
                 )
             );
         }
-        // Revoke all non-zero approvals that have been made.
+        // Revoke all non-zero approvals that have been made, if there's a spend limit.
         for (uint256 i; i < t.approvedERC20s.length(); ++i) {
-            SafeTransferLib.safeApprove(
-                t.approvedERC20s.getAddress(i), t.approvalSpenders.getAddress(i), 0
-            );
+            address token = t.approvedERC20s.getAddress(i);
+            if (spends.spends[token].periods.length() == uint256(0)) continue;
+            SafeTransferLib.safeApprove(token, t.approvalSpenders.getAddress(i), 0);
         }
-        // Revoke all non-zero Permit2 direct approvals that have been made.
+        // Revoke all non-zero Permit2 direct approvals that have been made, if there's a spend limit.
         for (uint256 i; i < t.permit2ERC20s.length(); ++i) {
-            SafeTransferLib.permit2Lockdown(
-                t.permit2ERC20s.getAddress(i), t.permit2Spenders.getAddress(i)
-            );
+            address token = t.permit2ERC20s.getAddress(i);
+            if (spends.spends[token].periods.length() == uint256(0)) continue;
+            SafeTransferLib.permit2Lockdown(token, t.permit2Spenders.getAddress(i));
         }
     }
 
@@ -493,9 +511,9 @@ contract GuardedExecutor is ERC7821 {
     /// @dev Increments the amount spent.
     function _incrementSpent(TokenSpendStorage storage s, uint256 amount) internal {
         if (amount == uint256(0)) return; // Early return.
-        uint256 n = s.periods.length();
-        for (uint256 i; i < n; ++i) {
-            uint8 period = s.periods.at(i);
+        uint8[] memory periods = s.periods.values();
+        for (uint256 i; i < periods.length; ++i) {
+            uint8 period = periods[i];
             TokenPeriodSpendStorage storage tokenPeriodSpend = s.spends[period];
             uint256 current = startOfSpendPeriod(block.timestamp, SpendPeriod(period));
             if (tokenPeriodSpend.lastUpdated < current) {
