@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.23;
 
+import {AccountRegistry} from "./AccountRegistry.sol";
 import {LibBitmap} from "solady/utils/LibBitmap.sol";
 import {LibERC7579} from "solady/accounts/LibERC7579.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
@@ -35,7 +36,13 @@ import {LibNonce} from "./LibNonce.sol";
 /// - Minimize chance of censorship.
 ///   This means once an UserOp is signed, it is infeasible to
 ///   alter or rearrange it to force it to fail.
-contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTransient {
+contract EntryPoint is
+    AccountRegistry,
+    EIP712,
+    Ownable,
+    CallContextChecker,
+    ReentrancyGuardTransient
+{
     using LibERC7579 for bytes32[];
     using EfficientHashLib for bytes32[];
     using LibBitmap for LibBitmap.Bitmap;
