@@ -509,7 +509,9 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
                 );
                 address paymentRecipient = Math.coalesce(u.paymentRecipient, address(this));
                 if (LibBit.and(finalPaymentAmount != 0, paymentRecipient != address(this))) {
-                    TokenTransferLib.safeTransfer(u.paymentToken, paymentRecipient, finalPaymentAmount);
+                    TokenTransferLib.safeTransfer(
+                        u.paymentToken, paymentRecipient, finalPaymentAmount
+                    );
                 }
                 if (paymentAmount > finalPaymentAmount) {
                     TokenTransferLib.safeTransfer(
