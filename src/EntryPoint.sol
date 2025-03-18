@@ -493,26 +493,29 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
 
         emit UserOpExecuted(u.eoa, u.nonce, selfCallSuccess, err);
 
-        if (LibBit.and(selfCallSuccess, paymentAmount != 0)) {
-            // Refund strategy:
-            // `totalAmountOfGasToPayFor = gasUsedThusFar + _REFUND_GAS`.
-            // `paymentAmountForGas = paymentPerGas * totalAmountOfGasToPayFor`.
-            // If we have overpaid, then refund `paymentAmount - paymentAmountForGas`.
-
+        if (selfCallSuccess) {
             gUsed = Math.rawSub(gStart, gasleft());
-            uint256 paymentPerGas = Math.coalesce(u.paymentPerGas, type(uint256).max);
-            uint256 finalPaymentAmount = Math.min(
-                paymentAmount,
-                Math.saturatingMul(paymentPerGas, Math.saturatingAdd(gUsed, _REFUND_GAS))
-            );
-            address paymentRecipient = Math.coalesce(u.paymentRecipient, address(this));
-            if (LibBit.and(finalPaymentAmount != 0, paymentRecipient != address(this))) {
-                TokenTransferLib.safeTransfer(u.paymentToken, paymentRecipient, finalPaymentAmount);
-            }
-            if (paymentAmount > finalPaymentAmount) {
-                TokenTransferLib.safeTransfer(
-                    u.paymentToken, payer, Math.rawSub(paymentAmount, finalPaymentAmount)
+
+            if (paymentAmount != 0) {
+                // Refund strategy:
+                // `totalAmountOfGasToPayFor = gasUsedThusFar + _REFUND_GAS`.
+                // `paymentAmountForGas = paymentPerGas * totalAmountOfGasToPayFor`.
+                // If we have overpaid, then refund `paymentAmount - paymentAmountForGas`.
+
+                uint256 paymentPerGas = Math.coalesce(u.paymentPerGas, type(uint256).max);
+                uint256 finalPaymentAmount = Math.min(
+                    paymentAmount,
+                    Math.saturatingMul(paymentPerGas, Math.saturatingAdd(gUsed, _REFUND_GAS))
                 );
+                address paymentRecipient = Math.coalesce(u.paymentRecipient, address(this));
+                if (LibBit.and(finalPaymentAmount != 0, paymentRecipient != address(this))) {
+                    TokenTransferLib.safeTransfer(u.paymentToken, paymentRecipient, finalPaymentAmount);
+                }
+                if (paymentAmount > finalPaymentAmount) {
+                    TokenTransferLib.safeTransfer(
+                        u.paymentToken, payer, Math.rawSub(paymentAmount, finalPaymentAmount)
+                    );
+                }
             }
         }
     }
