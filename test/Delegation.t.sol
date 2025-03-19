@@ -287,8 +287,8 @@ contract DelegationTest is BaseTest {
         Delegation.Key memory k;
         k.keyType = Delegation.KeyType(_randomUniform() & 1);
 
-        for(uint i=0; i < 20; i++){
-            k.expiry = uint40(i);
+        for (uint40 i = 0; i < 20; i++) {
+            k.expiry = i;
             k.publicKey = abi.encode(i);
             vm.prank(d.eoa);
             d.d.authorize(k);
