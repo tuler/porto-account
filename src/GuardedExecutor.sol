@@ -479,6 +479,23 @@ abstract contract GuardedExecutor is ERC7821 {
         }
     }
 
+    /// @dev Returns spend and execute infos for each provided key hash in the same order.
+    function spendAndExecuteInfos(bytes32[] calldata keyHashes)
+        public
+        view
+        virtual
+        returns (SpendInfo[][] memory spend, bytes32[][] memory canExecute)
+    {
+        uint256 count = keyHashes.length;
+        spend = new SpendInfo[][](count);
+        canExecute = new bytes32[][](count);
+
+        for (uint256 i = 0; i < count; i++) {
+            spend[i] = spendInfos(keyHashes[i]);
+            canExecute[i] = canExecutePackedInfos(keyHashes[i]);
+        }
+    }
+
     /// @dev Rounds the unix timestamp down to the period.
     function startOfSpendPeriod(uint256 unixTimestamp, SpendPeriod period)
         public
