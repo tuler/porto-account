@@ -95,10 +95,13 @@ contract AccountRegistry {
     /// @dev Removes the account from the ID. This is useful when a user wants to disassociate a key from an account.
     /// Must be invoked by the account itself.
     function removeAccount(address id) external {
-        StoredAccounts storage accounts = _getAccountRegistryStorage().accounts[id];
+        AccountRegistryStorage storage $ = _getAccountRegistryStorage();
 
-        if (!accounts.accounts.contains(msg.sender)) revert InvalidCaller();
+        if (!$.accounts[id].accounts.contains(msg.sender)) revert InvalidCaller();
+        $.accounts[id].accounts.remove(msg.sender);
 
-        accounts.accounts.remove(msg.sender);
+        if ($.accounts[id].accounts.length() == 0) {
+            delete $.accounts[id];
+        }
     }
 }
