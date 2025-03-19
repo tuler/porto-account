@@ -281,4 +281,27 @@ contract DelegationTest is BaseTest {
         vm.expectRevert(bytes4(keccak256("KeyDoesNotExist()")));
         kRetrieved = d.d.getKey(_hash(k));
     }
+
+    function testManyKeys() public {
+        DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
+        Delegation.Key memory k;
+        k.keyType = Delegation.KeyType(_randomUniform() & 1);
+
+        for (uint40 i = 0; i < 20; i++) {
+            k.expiry = i;
+            k.publicKey = abi.encode(i);
+            vm.prank(d.eoa);
+            d.d.authorize(k);
+        }
+
+        vm.warp(5);
+
+        (Delegation.Key[] memory keys, bytes32[] memory keyHashes) = d.d.getKeys();
+
+        assert(keys.length == keyHashes.length);
+        assert(keys.length == 16);
+
+        assert(keys[0].expiry == 0);
+        assert(keys[1].expiry == 5);
+    }
 }

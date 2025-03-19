@@ -355,6 +355,41 @@ contract Delegation is EIP712, GuardedExecutor {
         }
     }
 
+    /// @dev Returns arrays of all (non-expired) authorized keys and their hashes.
+    function getKeys()
+        public
+        view
+        virtual
+        returns (Key[] memory keys, bytes32[] memory keyHashes)
+    {
+        uint256 totalCount = keyCount();
+
+        keys = new Key[](totalCount);
+        keyHashes = new bytes32[](totalCount);
+
+        uint256 validCount = 0;
+        for (uint256 i = 0; i < totalCount; i++) {
+            bytes32 keyHash = _getDelegationStorage().keyHashes.at(i);
+            Key memory key = getKey(keyHash);
+
+            // If key.expiry is set and the key is expired, skip it.
+            if (LibBit.and(key.expiry != 0, block.timestamp > key.expiry)) {
+                continue;
+            }
+
+            keys[validCount] = key;
+            keyHashes[validCount] = keyHash;
+
+            validCount++;
+        }
+
+        // Adjust the length of the arrays to the validCount
+        assembly {
+            mstore(keys, validCount)
+            mstore(keyHashes, validCount)
+        }
+    }
+
     /// @dev Returns the hash of the key, which does not includes the expiry.
     function hash(Key memory key) public pure virtual returns (bytes32) {
         // `keccak256(abi.encode(key.keyType, keccak256(key.publicKey)))`.
