@@ -1,0 +1,26 @@
+name: Deployment
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+      - name: Deploy
+        env:
+          PRIVATE_KEY: ${{ secrets.deployer }}
+        run: | 
+          forge script DeployAllScript \
+            --rpc-url "https://odyssey.ithaca.xyz" \
+            --broadcast -q && \
+          jq -r '.transactions[].additionalContracts | "EntryPoint: " + .[0].address, "Delegation: "  + .[1].address, "EIP7702Proxy: " + .[2].address'  broadcast/DeployAll.s.sol/911867/run-latest.json
