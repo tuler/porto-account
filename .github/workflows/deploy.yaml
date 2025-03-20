@@ -16,6 +16,9 @@ jobs:
           submodules: 'recursive'
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          # TODO: use stable once https://github.com/foundry-rs/foundry/pull/9979 is released.
+          version: nightly
       - name: Deploy
         env:
           PRIVATE_KEY: ${{ secrets.deployer }}
