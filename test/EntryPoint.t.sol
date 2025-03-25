@@ -4,6 +4,8 @@ pragma solidity ^0.8.4;
 import "./utils/SoladyTest.sol";
 import "./Base.t.sol";
 import {MockSampleDelegateCallTarget} from "./utils/mocks/MockSampleDelegateCallTarget.sol";
+import {MockPayerWithState} from "./utils/mocks/MockPayerWithState.sol";
+import {MockPayerWithSignature} from "./utils/mocks/MockPayerWithSignature.sol";
 
 contract EntryPointTest is BaseTest {
     struct _TestFullFlowTemps {
@@ -628,5 +630,88 @@ contract EntryPointTest is BaseTest {
         assertEq(paymentToken.balanceOf(address(0xabcd)), 0.5 ether);
         assertEq(ep.getNonce(t.eoa, uint192(uSession.nonce >> 64)), uSession.nonce | 1);
         assertEq(ep.getNonce(t.eoa, uint192(uSuperAdmin.nonce >> 64)), uSuperAdmin.nonce | 1);
+    }
+
+    struct _TestPayViaAnotherPayerTemps {
+        MockPayerWithState withState;
+        MockPayerWithSignature withSignature;
+        DelegatedEOA withSignatureEOA;
+        address token;
+        uint256 funds;
+        bool isWithState;
+        bool corruptSignature;
+        bool unapprovedEntryPoint;
+        uint256 balanceBefore;
+        DelegatedEOA d;
+    }
+
+    function testPayViaAnotherPayer(bytes32) public {
+        _TestPayViaAnotherPayerTemps memory t;
+
+        t.withSignatureEOA = _randomEIP7702DelegatedEOA();
+        t.withState = new MockPayerWithState();
+        t.withSignature = new MockPayerWithSignature();
+        vm.deal(address(t.withState), type(uint192).max);
+        vm.deal(address(t.withSignature), type(uint192).max);
+        _mint(address(paymentToken), address(t.withState), type(uint192).max);
+        _mint(address(paymentToken), address(t.withSignature), type(uint192).max);
+
+        t.withState.setApprovedEntryPoint(address(ep), true);
+        t.withSignature.setApprovedEntryPoint(address(ep), true);
+        t.withSignature.setSigner(t.withSignatureEOA.eoa);
+
+        t.token = _randomChance(2) ? address(0) : address(paymentToken);
+        t.isWithState = _randomChance(2);
+
+        EntryPoint.UserOp memory u;
+        t.d = _randomEIP7702DelegatedEOA();
+        vm.deal(t.d.eoa, type(uint192).max);
+
+        u.eoa = t.d.eoa;
+        u.nonce = ep.getNonce(u.eoa, 0);
+        u.combinedGas = 1000000;
+        u.payer = t.isWithState ? address(t.withState) : address(t.withSignature);
+        u.paymentToken = t.token;
+        u.paymentAmount = _bound(_random(), 0, 1 ether);
+        u.paymentMaxAmount = 1 ether;
+        u.executionData = _transferExecutionData(address(0), address(0xabcd), 1 ether);
+
+        t.funds = _bound(_random(), 0, 2 ether);
+        if (t.isWithState) {
+            t.withState.increaseFunds(u.paymentToken, u.eoa, t.funds);
+        } else {
+            bytes32 digest = ep.computeDigest(u);
+            digest = t.withSignature.computeSignatureDigest(digest);
+            u.paymentSignature = _sig(t.withSignatureEOA, digest);
+            t.corruptSignature = _randomChance(2);
+            if (t.corruptSignature) {
+                u.paymentSignature = abi.encodePacked(keccak256(u.paymentSignature));
+            }
+        }
+        t.balanceBefore = _balanceOf(t.token, u.payer);
+
+        u.signature = _eoaSig(t.d.privateKey, u);
+
+        t.unapprovedEntryPoint = _randomChance(32);
+        if (t.unapprovedEntryPoint) {
+            t.withState.setApprovedEntryPoint(address(ep), false);
+            t.withSignature.setApprovedEntryPoint(address(ep), false);
+        }
+
+        if (
+            (t.isWithState && u.paymentAmount > t.funds && u.paymentAmount != 0)
+                || (!t.isWithState && t.corruptSignature && u.paymentAmount != 0)
+                || (t.unapprovedEntryPoint && u.paymentAmount != 0)
+        ) {
+            assertEq(ep.execute(abi.encode(u)), bytes4(keccak256("PaymentError()")));
+            assertEq(ep.getNonce(u.eoa, 0), u.nonce);
+            assertEq(_balanceOf(t.token, u.payer), t.balanceBefore);
+            assertEq(_balanceOf(address(0), address(0xabcd)), 0);
+        } else {
+            assertEq(ep.execute(abi.encode(u)), 0);
+            assertEq(ep.getNonce(u.eoa, 0), u.nonce + 1);
+            assertEq(_balanceOf(t.token, u.payer), t.balanceBefore - u.paymentAmount);
+            assertEq(_balanceOf(address(0), address(0xabcd)), 1 ether);
+        }
     }
 }
