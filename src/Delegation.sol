@@ -187,12 +187,11 @@ contract Delegation is EIP712, GuardedExecutor {
 
     /// @dev For EIP712 signature digest calculation for the `execute` function.
     bytes32 public constant EXECUTE_TYPEHASH = keccak256(
-        "Execute(bool multichain,Call[] calls,uint256 nonce)Call(address target,uint256 value,bytes data)"
+        "Execute(bool multichain,Call[] calls,uint256 nonce)Call(address to,uint256 value,bytes data)"
     );
 
     /// @dev For EIP712 signature digest calculation for the `execute` function.
-    bytes32 public constant CALL_TYPEHASH =
-        keccak256("Call(address target,uint256 value,bytes data)");
+    bytes32 public constant CALL_TYPEHASH = keccak256("Call(address to,uint256 value,bytes data)");
 
     /// @dev For EIP712 signature digest calculation.
     bytes32 public constant DOMAIN_TYPEHASH = _DOMAIN_TYPEHASH;

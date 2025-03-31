@@ -191,8 +191,7 @@ contract EntryPoint is
     );
 
     /// @dev For EIP712 signature digest calculation for the `execute` function.
-    bytes32 public constant CALL_TYPEHASH =
-        keccak256("Call(address target,uint256 value,bytes data)");
+    bytes32 public constant CALL_TYPEHASH = keccak256("Call(address to,uint256 value,bytes data)");
 
     /// @dev For EIP712 signature digest calculation.
     bytes32 public constant DOMAIN_TYPEHASH = _DOMAIN_TYPEHASH;
