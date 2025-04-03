@@ -604,9 +604,7 @@ contract EntryPointTest is BaseTest {
 
             (t.success, t.result) =
                 address(ep).call(abi.encodeWithSignature("simulateExecute(bytes)", abi.encode(u)));
-
-            assertFalse(t.success);
-            assertEq(bytes4(LibBytes.load(t.result, 0x00)), EntryPoint.SimulationResult.selector);
+            assertTrue(t.success);
 
             t.gExecute = uint256(LibBytes.load(t.result, 0x04));
             t.gCombined = uint256(LibBytes.load(t.result, 0x24));

@@ -125,6 +125,20 @@ contract EntryPoint is
         bytes paymentSignature;
     }
 
+    /// @dev A struct for returning the gas required and the error from a simulation.
+    struct SimulationResult {
+        /// @dev Recommended amount of gas to pass into execute
+        uint256 gExecute;
+        /// @dev Recommendation for `gasCombined`
+        uint256 gCombined;
+        /// @dev Amount of gas that has been eaten
+        uint256 gUsed;
+        /// @dev `err` is the error selector from the simulation.
+        ///   If the `err` is non-zero, it means that the simulation with `gExecute`
+        ///   has not resulted in a success execution.
+        bytes4 err;
+    }
+
     ////////////////////////////////////////////////////////////////////////
     // Errors
     ////////////////////////////////////////////////////////////////////////
@@ -146,10 +160,6 @@ contract EntryPoint is
 
     /// @dev The order has already been filled.
     error OrderAlreadyFilled();
-
-    /// @dev For returning the gas required and the error from a simulation.
-    /// For the meaning of the returned variables, see `simulateExecute`.
-    error SimulationResult(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
 
     /// @dev The simulate execute run has failed. Try passing in more gas to the simulation.
     error SimulateExecuteFailed();
@@ -310,7 +320,12 @@ contract EntryPoint is
     ///   For most accurate metering, the signatures should be actual signatures,
     ///   but signed by a different private key of the same key type.
     ///   For simulations, we want to avoid early returns for trivially invalid signatures.
-    function simulateExecute(bytes calldata encodedUserOp) public payable virtual {
+    function simulateExecute(bytes calldata encodedUserOp)
+        public
+        payable
+        virtual
+        returns (SimulationResult memory result)
+    {
         uint256 gExecute = gasleft();
         uint256 gCombined;
         uint256 gUsed;
@@ -370,7 +385,16 @@ contract EntryPoint is
                 gExecute := add(gExecute, 500)
             }
         }
-        revert SimulationResult(gExecute, gCombined, gUsed, err);
+
+        result.gExecute = gExecute;
+        result.gCombined = gCombined;
+        result.gUsed = gUsed;
+        result.err = err;
+
+        // Execute one final time without reverting.
+        //
+        // This allows eth_simulateV1 to collect all logs from the execution.
+        _execute(encodedUserOp, 1 << 254);
     }
 
     /// @dev This function is intended for self-call via `simulateExecute`.
