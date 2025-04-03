@@ -317,9 +317,11 @@ contract EntryPoint is
     ///     `abi.encodePacked(bytes(innerSignature), bytes32(keyHash), bool(prehash))`.
     ///     The `keyHash` is required for triggering to validation and GuardedExecutor
     ///     code paths for that particular `keyHash`.
-    ///   For most accurate metering, the signatures should be actual signatures,
-    ///   but signed by a different private key of the same key type.
-    ///   For simulations, we want to avoid early returns for trivially invalid signatures.
+    /// - For most accurate metering:
+    ///   - UserOp should have a payment amount greater than 0.
+    ///   - the signatures should be actual signatures, 
+    ///     but signed by a different private key of the same key type.
+    ///     For simulations, we want to avoid early returns for trivially invalid signatures.
     function simulateExecute(bytes calldata encodedUserOp)
         public
         payable
