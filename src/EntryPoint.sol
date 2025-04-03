@@ -326,6 +326,9 @@ contract EntryPoint is
         virtual
         returns (SimulationResult memory result)
     {
+        // Ensures we can only call this function with state overrides or vm.cheat
+        assert(msg.sender.balance == type(uint256).max);
+
         uint256 gExecute = gasleft();
         uint256 gCombined;
         uint256 gUsed;
