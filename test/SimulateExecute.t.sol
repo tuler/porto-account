@@ -86,13 +86,7 @@ contract SimulateExecuteTest is BaseTest {
         emit LogUint("gUsed", t.gUsed);
         assertEq(bytes4(LibBytes.load(t.result, 0x60)), 0);
 
-        // u.combinedGas = t.gCombined;
-        // u.signature = _sig(d, u);
-
-        // assertEq(ep.execute{gas: t.gExecute}(abi.encode(u)), 0);
-        // assertEq(gasBurner.randomness(), t.randomness);
-
-        // ep.simulateExecute(abi.encode(u));
+        assertEq(gasBurner.randomness(), t.randomness);
     }
 
     function testSimulateExecuteWithEOAKey(bytes32) public {
