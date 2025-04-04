@@ -312,6 +312,8 @@ contract EntryPoint is
     ///   - The signatures should be actual signatures,
     ///     but signed by a different private key of the same key type.
     ///     For simulations, we want to avoid early returns for trivially invalid signatures.
+    /// - To enable this function to return instead of reverting, for `eth_simulateV1`,
+    ///   use a state override to set `msg.sender.balance` to `type(uint256).max`.
     function simulateExecute(bytes calldata encodedUserOp)
         public
         payable
