@@ -126,17 +126,17 @@ contract EntryPoint is
     }
 
     ////////////////////////////////////////////////////////////////////////
-    // UserOp offets
+    // UserOp Offets
     ////////////////////////////////////////////////////////////////////////
 
     /// @dev Offset of `paymentAmount` in the UserOp struct.
-    uint256 internal constant _PAYMENT_AMOUNT_OFFSET = 6 * 0x20;
+    uint256 internal constant _USER_OP_PAYMENT_AMOUNT_OFFSET = 6 * 0x20;
 
     /// @dev Offset of `paymentMaxAmount` in the UserOp struct.
-    uint256 internal constant _PAYMENT_MAX_AMOUNT_OFFSET = 7 * 0x20;
+    uint256 internal constant _USER_OP_PAYMENT_MAX_AMOUNT_OFFSET = 7 * 0x20;
 
     /// @dev Offset of `paymentPerGas` in the UserOp struct.
-    uint256 internal constant _PAYMENT_PER_GAS_OFFSET = 8 * 0x20;
+    uint256 internal constant _USER_OP_PAYMENT_PER_GAS_OFFSET = 8 * 0x20;
 
     ////////////////////////////////////////////////////////////////////////
     // Errors
@@ -413,10 +413,10 @@ contract EntryPoint is
             // payment override, it incurs runtime gas costs.
             let o := add(data, 0x64)
             let u := add(o, mload(o)) // Start of the UserOp in memory.
-            let paymentPerGas := mload(add(u, _PAYMENT_PER_GAS_OFFSET))
+            let paymentPerGas := mload(add(u, _USER_OP_PAYMENT_PER_GAS_OFFSET))
             let paymentOverride := saturatingMul(paymentPerGas, gCombined)
-            mstore(add(u, _PAYMENT_AMOUNT_OFFSET), paymentOverride)
-            mstore(add(u, _PAYMENT_MAX_AMOUNT_OFFSET), paymentOverride)
+            mstore(add(u, _USER_OP_PAYMENT_AMOUNT_OFFSET), paymentOverride)
+            mstore(add(u, _USER_OP_PAYMENT_MAX_AMOUNT_OFFSET), paymentOverride)
             if iszero(call(gas(), address(), 0, add(data, 0x20), mload(data), 0x00, 0x00)) {
                 revertSimulateExecuteFailed()
             }
@@ -464,9 +464,9 @@ contract EntryPoint is
         assembly ("memory-safe") {
             let noRevertCaller := calldataload(0x24)
             if noRevertCaller {
-                // Require that the balance of the no revert caller is `type(uint256).max`.
-                if add(balance(noRevertCaller), 1) { invalid() }
-                return(0x00, 0x00) //
+                // Revert if not via self-call, or `noRevertCaller.balance != type(uint256).max`.
+                if or(xor(caller(), address()), add(balance(noRevertCaller), 1)) { invalid() }
+                stop() // Return with zero data.
             }
             // Revert with `abi.encodePacked(bytes4(0xffffffff), abi.encode(gUsed, err))`.
             mstore(0x00, not(0)) // `0xffffffff`.
