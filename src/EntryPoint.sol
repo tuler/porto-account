@@ -212,6 +212,13 @@ contract EntryPoint is
     /// Should be enough for a cold zero to non-zero SSTORE + a warm SSTORE + a few SLOADs.
     uint256 internal constant _REFUND_GAS = 50000;
 
+    /// @dev If this storage slot's value is non-zero, the `simulateExecute` function will not revert,
+    /// but instead run a final simulation to let `eth_simulateV1` get all logs.
+    /// And then finally return with the estimated gas values.
+    /// `keccak256("_SIMULATE_EXECUTE_NO_REVERT_SLOT")`.
+    bytes32 internal constant _SIMULATE_EXECUTE_NO_REVERT_SLOT =
+        0x1a0d35690cb22144d61308ea6e5690d6e6104380dd63369074d15bf8058de0a8;
+
     ////////////////////////////////////////////////////////////////////////
     // Storage
     ////////////////////////////////////////////////////////////////////////
@@ -310,11 +317,13 @@ contract EntryPoint is
     ///   For most accurate metering, the signatures should be actual signatures,
     ///   but signed by a different private key of the same key type.
     ///   For simulations, we want to avoid early returns for trivially invalid signatures.
-    function simulateExecute(bytes calldata encodedUserOp) public payable virtual {
-        uint256 gExecute = gasleft();
-        uint256 gCombined;
-        uint256 gUsed;
-        bytes4 err;
+    function simulateExecute(bytes calldata encodedUserOp)
+        public
+        payable
+        virtual
+        returns (uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err)
+    {
+        gExecute = gasleft();
         assembly ("memory-safe") {
             function callSimulateExecute(g_, data_) -> _success {
                 calldatacopy(0x00, calldatasize(), 0x40) // Zeroize the memory for the return data.
@@ -370,7 +379,12 @@ contract EntryPoint is
                 gExecute := add(gExecute, 500)
             }
         }
-        revert SimulationResult(gExecute, gCombined, gUsed, err);
+        if (LibStorage.ref(_SIMULATE_EXECUTE_NO_REVERT_SLOT).value == uint256(0)) {
+            revert SimulationResult(gExecute, gCombined, gUsed, err);
+        }
+        // Execute one final time without reverting.
+        // This allows `eth_simulateV1` to collect all logs from the execution.
+        _execute(encodedUserOp, 1 << 254);
     }
 
     /// @dev This function is intended for self-call via `simulateExecute`.
