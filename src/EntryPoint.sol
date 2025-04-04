@@ -126,6 +126,19 @@ contract EntryPoint is
     }
 
     ////////////////////////////////////////////////////////////////////////
+    // UserOp offets
+    ////////////////////////////////////////////////////////////////////////
+
+    /// @dev Offset of `paymentAmount` in the UserOp struct.
+    uint256 internal constant _PAYMENT_AMOUNT_OFFSET = 6 * 0x20;
+
+    /// @dev Offset of `paymentMaxAmount` in the UserOp struct.
+    uint256 internal constant _PAYMENT_MAX_AMOUNT_OFFSET = 7 * 0x20;
+
+    /// @dev Offset of `paymentPerGas` in the UserOp struct.
+    uint256 internal constant _PAYMENT_PER_GAS_OFFSET = 8 * 0x20;
+
+    ////////////////////////////////////////////////////////////////////////
     // Errors
     ////////////////////////////////////////////////////////////////////////
 
@@ -331,11 +344,15 @@ contract EntryPoint is
                 mstore(0x00, 0x234e352e) // `SimulateExecuteFailed()`.
                 revert(0x1c, 0x04)
             }
+            function saturatingMul(x_, y_) -> _z {
+                _z := or(sub(or(iszero(x_), eq(div(mul(x_, y_), x_), y_)), 1), mul(x_, y_))
+            }
             // `abi.encodePacked(bytes4(0xffffffff), combinedGasOverride, encodedUserOp)`.
             let data := mload(0x40)
             mstore(add(data, 0x04), 0xffffffff) // `selfCallSimulateExecute565348489()`.
-            calldatacopy(add(data, 0x44), encodedUserOp.offset, encodedUserOp.length)
-            mstore(data, add(0x24, encodedUserOp.length)) // Store `data.length`.
+            mstore(add(data, 0x44), 0) // `noRevertCaller`.
+            calldatacopy(add(data, 0x64), encodedUserOp.offset, encodedUserOp.length)
+            mstore(data, add(0x44, encodedUserOp.length)) // Store `data.length`.
 
             // Setting the bit at `1 << 254` tells `_execute` that we want the
             // simulation to skip the invalid signature revert and also the 63/64 rule revert.
@@ -375,14 +392,35 @@ contract EntryPoint is
                 // function dispatch between `execute` and `simulateExecute`.
                 gExecute := add(gExecute, 500)
             }
+            // If `msg.sender.balance < type(uint256).max`, revert.
+            if add(balance(caller()), 1) {
+                mstore(data, 0xe33c2c73) // `SimulationResult(uint256,uint256,uint256,bytes4)`.
+                mstore(add(data, 0x20), gExecute)
+                mstore(add(data, 0x40), gCombined)
+                mstore(add(data, 0x60), gUsed)
+                mstore(add(data, 0x80), err)
+                revert(add(data, 0x1c), 0x84)
+            }
+
+            // Execute one final time without reverting.
+            // This allows `eth_simulateV1` to collect all logs from the execution.
+            mstore(add(data, 0x24), or(shl(254, 1), 0xffffffffffffffffffffffff))
+            mstore(add(data, 0x44), caller()) // `noRevertCaller`.
+
+            // Because `encodedUserOp` is in the calldata, we have to do a self call to
+            // `selfCallSimulateExecute565348489` to replace the `paymentAmount` and `paymentMaxAmount`.
+            // While it is technically possible to modify `_pay` and `_execute` to support a
+            // payment override, it incurs runtime gas costs.
+            let o := add(data, 0x64)
+            let u := add(o, mload(o)) // Start of the UserOp in memory.
+            let paymentPerGas := mload(add(u, _PAYMENT_PER_GAS_OFFSET))
+            let paymentOverride := saturatingMul(paymentPerGas, gCombined)
+            mstore(add(u, _PAYMENT_AMOUNT_OFFSET), paymentOverride)
+            mstore(add(u, _PAYMENT_MAX_AMOUNT_OFFSET), paymentOverride)
+            if iszero(call(gas(), address(), 0, add(data, 0x20), mload(data), 0x00, 0x00)) {
+                revertSimulateExecuteFailed()
+            }
         }
-        // We can only set `msg.sender.balance` to `type(uint256).max` via vm cheats or state overrides.
-        if (msg.sender.balance != type(uint256).max) {
-            revert SimulationResult(gExecute, gCombined, gUsed, err);
-        }
-        // Execute one final time without reverting.
-        // This allows `eth_simulateV1` to collect all logs from the execution.
-        _execute(encodedUserOp, 1 << 254);
     }
 
     /// @dev This function is intended for self-call via `simulateExecute`.
@@ -411,8 +449,8 @@ contract EntryPoint is
         uint256 combinedGasOverride;
         assembly ("memory-safe") {
             combinedGasOverride := calldataload(0x04)
-            encodedUserOp.offset := 0x24
-            encodedUserOp.length := sub(calldatasize(), 0x24)
+            encodedUserOp.offset := 0x44
+            encodedUserOp.length := sub(calldatasize(), 0x44)
         }
         uint256 gUsed;
         bytes4 err;
@@ -423,8 +461,14 @@ contract EntryPoint is
         } else {
             (gUsed, err) = _execute(encodedUserOp, combinedGasOverride);
         }
-        // Revert with `abi.encodePacked(bytes4(0xffffffff), abi.encode(gUsed, err))`.
         assembly ("memory-safe") {
+            let noRevertCaller := calldataload(0x24)
+            if noRevertCaller {
+                // Require that the balance of the no revert caller is `type(uint256).max`.
+                if add(balance(noRevertCaller), 1) { invalid() }
+                return(0x00, 0x00) //
+            }
+            // Revert with `abi.encodePacked(bytes4(0xffffffff), abi.encode(gUsed, err))`.
             mstore(0x00, not(0)) // `0xffffffff`.
             mstore(0x04, gUsed)
             mstore(0x24, shl(224, shr(224, err))) // Clean the lower bytes of `err` word.
