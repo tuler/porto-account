@@ -125,20 +125,6 @@ contract EntryPoint is
         bytes paymentSignature;
     }
 
-    /// @dev A struct for returning the gas required and the error from a simulation.
-    struct SimulationResult {
-        /// @dev Recommended amount of gas to pass into execute
-        uint256 gExecute;
-        /// @dev Recommendation for `gasCombined`
-        uint256 gCombined;
-        /// @dev Amount of gas that has been eaten
-        uint256 gUsed;
-        /// @dev `err` is the error selector from the simulation.
-        ///   If the `err` is non-zero, it means that the simulation with `gExecute`
-        ///   has not resulted in a success execution.
-        bytes4 err;
-    }
-
     ////////////////////////////////////////////////////////////////////////
     // Errors
     ////////////////////////////////////////////////////////////////////////
@@ -160,6 +146,10 @@ contract EntryPoint is
 
     /// @dev The order has already been filled.
     error OrderAlreadyFilled();
+
+    /// @dev For returning the gas required and the error from a simulation.
+    /// For the meaning of the returned variables, see `simulateExecute`.
+    error SimulationResult(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
 
     /// @dev The simulate execute run has failed. Try passing in more gas to the simulation.
     error SimulateExecuteFailed();
@@ -319,22 +309,16 @@ contract EntryPoint is
     ///     code paths for that particular `keyHash`.
     /// - For most accurate metering:
     ///   - UserOp should have a payment amount greater than 0.
-    ///   - the signatures should be actual signatures, 
+    ///   - The signatures should be actual signatures,
     ///     but signed by a different private key of the same key type.
     ///     For simulations, we want to avoid early returns for trivially invalid signatures.
     function simulateExecute(bytes calldata encodedUserOp)
         public
         payable
         virtual
-        returns (SimulationResult memory result)
+        returns (uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err)
     {
-        // Ensures we can only call this function with state overrides or vm.cheat
-        assert(msg.sender.balance == type(uint256).max);
-
-        uint256 gExecute = gasleft();
-        uint256 gCombined;
-        uint256 gUsed;
-        bytes4 err;
+        gExecute = gasleft();
         assembly ("memory-safe") {
             function callSimulateExecute(g_, data_) -> _success {
                 calldatacopy(0x00, calldatasize(), 0x40) // Zeroize the memory for the return data.
@@ -390,15 +374,12 @@ contract EntryPoint is
                 gExecute := add(gExecute, 500)
             }
         }
-
-        result.gExecute = gExecute;
-        result.gCombined = gCombined;
-        result.gUsed = gUsed;
-        result.err = err;
-
+        // We can only set `msg.sender.balance` to `type(uint256).max` via vm cheats or state overrides.
+        if (msg.sender.balance != type(uint256).max) {
+            revert SimulationResult(gExecute, gCombined, gUsed, err);
+        }
         // Execute one final time without reverting.
-        //
-        // This allows eth_simulateV1 to collect all logs from the execution.
+        // This allows `eth_simulateV1` to collect all logs from the execution.
         _execute(encodedUserOp, 1 << 254);
     }
 
@@ -954,7 +935,7 @@ contract EntryPoint is
         returns (string memory name, string memory version)
     {
         name = "EntryPoint";
-        version = "0.0.1";
+        version = "0.0.2";
     }
 
     ////////////////////////////////////////////////////////////////////////
