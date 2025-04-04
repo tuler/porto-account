@@ -321,8 +321,12 @@ contract EntryPoint is
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err)
     {
         gExecute = gasleft();
+        // Setting the bit at `1 << 254` tells `_execute` that we want the
+        // simulation to skip the invalid signature revert and also the 63/64 rule revert.
+        // Also use `2**96 - 1` as the `combinedGas` for the very first call to `_execute`.
+        uint256 combinedGasOverride = (1 << 254) | 0xffffffffffffffffffffffff;
         bytes memory data =
-            abi.encodePacked(bytes4(0xffffffff), uint256(0), uint256(0), encodedUserOp);
+            abi.encodePacked(bytes4(0xffffffff), combinedGasOverride, uint256(0), encodedUserOp);
 
         assembly ("memory-safe") {
             function callSimulateExecute(g_, data_) -> _success {
@@ -335,10 +339,6 @@ contract EntryPoint is
                 revert(0x1c, 0x04)
             }
 
-            // Setting the bit at `1 << 254` tells `_execute` that we want the
-            // simulation to skip the invalid signature revert and also the 63/64 rule revert.
-            // Also use `2**96 - 1` as the `combinedGas` for the very first call to `_execute`.
-            mstore(add(data, 0x24), or(shl(254, 1), 0xffffffffffffffffffffffff))
             if iszero(callSimulateExecute(gas(), data)) { revertSimulateExecuteFailed() }
             gUsed := mload(0x04)
             err := mload(0x24)
@@ -384,10 +384,7 @@ contract EntryPoint is
         u.paymentMaxAmount = paymentOverride;
         (bool success,) = address(this).call(
             abi.encodePacked(
-                bytes4(0xffffffff),
-                uint256((1 << 254) | 0xffffffffffffffffffffffff),
-                uint256(uint160(msg.sender)),
-                abi.encode(u)
+                bytes4(0xffffffff), combinedGasOverride, uint256(uint160(msg.sender)), abi.encode(u)
             )
         );
         if (!success) revert SimulateExecuteFailed();
