@@ -305,11 +305,9 @@ contract DelegationTest is BaseTest {
         assert(keys[1].expiry == 5);
     }
 
-    function testAuthorizedDisallowedSuperAdminKeyTypeReverts() public {
-        uint256 disallowedSuperAdminKeyTypes = 1 << uint8(Delegation.KeyType.P256);
+    function testAddDisallowedSuperAdminKeyTypeReverts() public {
         address entryPoint = address(new EntryPoint(address(this)));
-        address delegationImplementation =
-            address(new Delegation(address(entryPoint), disallowedSuperAdminKeyTypes));
+        address delegationImplementation = address(new Delegation(address(entryPoint)));
         address delegationProxy = address(new EIP7702Proxy(delegationImplementation, address(0)));
         delegation = MockDelegation(payable(delegationProxy));
 

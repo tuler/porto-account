@@ -11,10 +11,8 @@ contract DeployAll {
     address public immutable delegationProxy;
 
     constructor(address deployer) payable {
-        uint256 disallowedSuperAdminKeyTypes = 1 << uint8(Delegation.KeyType.P256);
         entryPoint = address(new EntryPoint(deployer));
-        delegationImplementation =
-            address(new Delegation(address(entryPoint), disallowedSuperAdminKeyTypes));
+        delegationImplementation = address(new Delegation(address(entryPoint)));
         delegationProxy = address(new EIP7702Proxy(delegationImplementation, address(0)));
     }
 }

@@ -9,7 +9,11 @@ import {Brutalizer} from "../Brutalizer.sol";
 contract MockDelegation is Delegation, Brutalizer {
     uint256 public x;
 
-    constructor(address entryPoint) payable Delegation(entryPoint, 0) {}
+    constructor(address entryPoint) payable Delegation(entryPoint) {}
+
+    function _keyTypeCanBeSuperAdmin(KeyType) internal pure override returns (bool) {
+        return true;
+    }
 
     function setX(uint256 newX) public onlyThis {
         x = newX;

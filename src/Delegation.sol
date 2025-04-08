@@ -184,10 +184,6 @@ contract Delegation is EIP712, GuardedExecutor {
     /// @dev The entry point address.
     address public immutable ENTRY_POINT;
 
-    /// @dev A bitmap which each set bit (i.e. `1 << uint8(keyType)`) denotes
-    /// that the keyType cannot be set as a super admin.
-    uint256 internal immutable _DISALLOWED_SUPER_ADMIN_KEY_TYPES;
-
     ////////////////////////////////////////////////////////////////////////
     // Constants
     ////////////////////////////////////////////////////////////////////////
@@ -215,9 +211,8 @@ contract Delegation is EIP712, GuardedExecutor {
     // Constructor
     ////////////////////////////////////////////////////////////////////////
 
-    constructor(address entryPoint, uint256 disallowedSuperAdminKeyTypes) payable {
+    constructor(address entryPoint) payable {
         ENTRY_POINT = entryPoint;
-        _DISALLOWED_SUPER_ADMIN_KEY_TYPES = disallowedSuperAdminKeyTypes;
     }
 
     ////////////////////////////////////////////////////////////////////////
@@ -475,9 +470,7 @@ contract Delegation is EIP712, GuardedExecutor {
     /// @dev Adds the key. If the key already exist, its expiry will be updated.
     function _addKey(Key memory key) internal virtual returns (bytes32 keyHash) {
         if (key.isSuperAdmin) {
-            if (_DISALLOWED_SUPER_ADMIN_KEY_TYPES & (1 << uint8(key.keyType)) != 0) {
-                revert KeyTypeCannotBeSuperAdmin();
-            }
+            if (!_keyTypeCanBeSuperAdmin(key.keyType)) revert KeyTypeCannotBeSuperAdmin();
         }
         // `keccak256(abi.encode(key.keyType, keccak256(key.publicKey)))`.
         keyHash = hash(key);
@@ -486,6 +479,11 @@ contract Delegation is EIP712, GuardedExecutor {
             abi.encodePacked(key.publicKey, key.expiry, key.keyType, key.isSuperAdmin)
         );
         $.keyHashes.add(keyHash);
+    }
+
+    /// @dev Returns if the `keyType` can be a super admin.
+    function _keyTypeCanBeSuperAdmin(KeyType keyType) internal view virtual returns (bool) {
+        return keyType != KeyType.P256;
     }
 
     /// @dev Removes the key corresponding to the `keyHash`. Reverts if the key does not exist.
