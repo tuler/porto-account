@@ -146,4 +146,24 @@ contract BenchmarkTest is BaseTest {
         assertEq(paymentToken.balanceOf(address(0xbabe)), 1 ether);
         vm.resumeGasMetering();
     }
+
+    function testERC20TransferDirect() public {
+        vm.pauseGasMetering();
+
+        DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
+        vm.deal(d.eoa, type(uint128).max);
+        _mint(address(paymentToken), d.eoa, type(uint128).max);
+
+        vm.startPrank(d.eoa);
+
+        vm.resumeGasMetering();
+
+        paymentToken.transfer(address(0xbabe), 1 ether);
+
+        vm.stopPrank();
+
+        vm.pauseGasMetering();
+        assertEq(paymentToken.balanceOf(address(0xbabe)), 1 ether);
+        vm.resumeGasMetering();
+    }
 }
