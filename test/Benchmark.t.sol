@@ -17,22 +17,6 @@ contract MockERC4337Account is ERC4337 {
     {
         return ("MockERC4337Account", "0.0.1");
     }
-
-    // function validateUserOp(
-    //     PackedUserOperation calldata userOp,
-    //     bytes32 userOpHash,
-    //     uint256 missingAccountFunds
-    // )
-    //     external
-    //     payable
-    //     virtual
-    //     override
-    //     onlyEntryPoint
-    //     payPrefund(missingAccountFunds)
-    //     returns (uint256 validationData)
-    // {
-    //     // Just do nothing.
-    // }
 }
 
 contract BenchmarkTest is BaseTest {
