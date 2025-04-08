@@ -29,6 +29,14 @@ contract BenchmarkTest is BaseTest {
     }
 
     function testERC20TransferViaERC4337EntryPoint() public {
+        _testERC20TransferViaERC4337EntryPoint("");
+    }
+
+    function testERC20TransferViaERC4337EntryPointWithExtendedCalldata() public {
+        _testERC20TransferViaERC4337EntryPoint(new bytes(2048));
+    }
+
+    function _testERC20TransferViaERC4337EntryPoint(bytes memory junk) internal {
         vm.pauseGasMetering();
 
         // This benchmark includes paying for the prefund.
@@ -43,12 +51,12 @@ contract BenchmarkTest is BaseTest {
         u.preVerificationGas = 1000000;
         u.gasFees = bytes32(uint256(1000000 | (1000000 << 128)));
 
-        u.callData = abi.encodeWithSignature(
-            "execute(address,uint256,bytes)",
-            address(paymentToken),
-            uint256(0),
-            abi.encodeWithSignature("transfer(address,uint256)", address(0xbabe), 1 ether)
-        );
+        ERC4337.Call[] memory calls = new ERC4337.Call[](1);
+        calls[0].target = address(paymentToken);
+        calls[0].data =
+            abi.encodeWithSignature("transfer(address,uint256)", address(0xbabe), 1 ether);
+        u.callData = abi.encodeWithSignature("executeBatch((address,uint256,bytes)[])", calls);
+        u.callData = abi.encodePacked(u.callData, junk);
 
         u.signature = _eoaSig(
             erc4337AccountEOAPrivateKey,
@@ -68,6 +76,14 @@ contract BenchmarkTest is BaseTest {
     }
 
     function testERC20TransferViaPortoEntryPoint() public {
+        _testERC20TransferViaPortoEntryPoint("");
+    }
+
+    function testERC20TransferViaPortoEntryPointWithExtendedCalldata() public {
+        _testERC20TransferViaPortoEntryPoint(new bytes(2048));
+    }
+
+    function _testERC20TransferViaPortoEntryPoint(bytes memory junk) internal {
         vm.pauseGasMetering();
 
         DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
