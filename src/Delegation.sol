@@ -499,6 +499,11 @@ contract Delegation is EIP712, GuardedExecutor {
     ) public virtual {
         if (!LibBit.and(msg.sender == ENTRY_POINT, eoa == address(this))) revert Unauthorized();
         TokenTransferLib.safeTransfer(paymentToken, paymentRecipient, paymentAmount);
+        // Increase spend.
+        if (!(keyHash == bytes32(0) || _isSuperAdmin(keyHash))) {
+            SpendStorage storage spends = _getGuardedExecutorKeyStorage(keyHash).spends;
+            _incrementSpent(spends.spends[paymentToken], paymentAmount);
+        }
         // Silence unused variables warning.
         userOpDigest = userOpDigest;
         paymentSignature = paymentSignature;
