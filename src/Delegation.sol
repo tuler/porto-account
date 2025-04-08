@@ -493,6 +493,7 @@ contract Delegation is EIP712, GuardedExecutor {
         address paymentRecipient,
         uint256 paymentAmount,
         address eoa,
+        bytes32 keyHash,
         bytes32 userOpDigest,
         bytes calldata paymentSignature
     ) public virtual {

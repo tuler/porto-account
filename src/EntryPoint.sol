@@ -699,7 +699,7 @@ contract EntryPoint is
         // Off-chain simulation of `_pay` should suffice,
         // provided that the token balance does not decrease in the window between
         // off-chain simulation and on-chain execution.
-        if (u.paymentAmount != 0) _pay(u, digest);
+        if (u.paymentAmount != 0) _pay(u, keyHash, digest);
 
         // Once the payment has been made, the nonce must be invalidated.
         // Otherwise, an attacker can keep replaying the UserOp to take payment and drain the user.
@@ -842,7 +842,7 @@ contract EntryPoint is
 
     /// @dev Makes the `eoa` perform a payment to the `entryPoint`.
     /// This reverts if the payment is insufficient or fails. Otherwise returns nothing.
-    function _pay(UserOp calldata u, bytes32 digest) internal virtual {
+    function _pay(UserOp calldata u, bytes32 keyHash, bytes32 digest) internal virtual {
         uint256 paymentAmount = u.paymentAmount;
         address paymentToken = u.paymentToken;
         uint256 requiredBalanceAfter = Math.saturatingAdd(
@@ -856,16 +856,19 @@ contract EntryPoint is
         bytes calldata paymentSignature = u.paymentSignature;
         assembly ("memory-safe") {
             let m := mload(0x40) // Cache the free memory pointer.
-            mstore(m, 0xf5f996bd) // `compensate(address,address,uint256,address,bytes32,bytes)`.
+            mstore(m, 0xce835432) // `compensate(address,address,uint256,address,bytes32,bytes32,bytes)`.
             mstore(add(m, 0x20), shr(96, shl(96, paymentToken)))
             mstore(add(m, 0x40), address())
             mstore(add(m, 0x60), paymentAmount)
             mstore(add(m, 0x80), shr(96, shl(96, eoa)))
-            mstore(add(m, 0xa0), digest)
-            mstore(add(m, 0xc0), 0xc0)
-            mstore(add(m, 0xe0), paymentSignature.length)
-            calldatacopy(add(m, 0x100), paymentSignature.offset, paymentSignature.length)
-            pop(call(gas(), payer, 0, add(m, 0x1c), add(0xe4, paymentSignature.length), 0x00, 0x00))
+            mstore(add(m, 0xa0), keyHash)
+            mstore(add(m, 0xc0), digest)
+            mstore(add(m, 0xe0), 0xe0)
+            mstore(add(m, 0x100), paymentSignature.length)
+            calldatacopy(add(m, 0x120), paymentSignature.offset, paymentSignature.length)
+            pop(
+                call(gas(), payer, 0, add(m, 0x1c), add(0x104, paymentSignature.length), 0x00, 0x00)
+            )
         }
         if (TokenTransferLib.balanceOf(paymentToken, address(this)) < requiredBalanceAfter) {
             revert PaymentError();
