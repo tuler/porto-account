@@ -141,6 +141,9 @@ contract Delegation is EIP712, GuardedExecutor {
     /// @dev The PREP `initData` is invalid.
     error InvalidPREP();
 
+    /// @dev The `keyType` cannot be super admin.
+    error KeyTypeCannotBeSuperAdmin();
+
     ////////////////////////////////////////////////////////////////////////
     // Events
     ////////////////////////////////////////////////////////////////////////
@@ -181,6 +184,10 @@ contract Delegation is EIP712, GuardedExecutor {
     /// @dev The entry point address.
     address public immutable ENTRY_POINT;
 
+    /// @dev A bitmap which each set bit (i.e. `1 << uint8(keyType)`) denotes
+    /// that the keyType cannot be set as a super admin.
+    uint256 internal immutable _DISALLOWED_SUPER_ADMIN_KEY_TYPES;
+
     ////////////////////////////////////////////////////////////////////////
     // Constants
     ////////////////////////////////////////////////////////////////////////
@@ -208,8 +215,9 @@ contract Delegation is EIP712, GuardedExecutor {
     // Constructor
     ////////////////////////////////////////////////////////////////////////
 
-    constructor(address entryPoint) payable {
+    constructor(address entryPoint, uint256 disallowedSuperAdminKeyTypes) payable {
         ENTRY_POINT = entryPoint;
+        _DISALLOWED_SUPER_ADMIN_KEY_TYPES = disallowedSuperAdminKeyTypes;
     }
 
     ////////////////////////////////////////////////////////////////////////
@@ -466,6 +474,11 @@ contract Delegation is EIP712, GuardedExecutor {
 
     /// @dev Adds the key. If the key already exist, its expiry will be updated.
     function _addKey(Key memory key) internal virtual returns (bytes32 keyHash) {
+        if (key.isSuperAdmin) {
+            if (_DISALLOWED_SUPER_ADMIN_KEY_TYPES & (1 << uint8(key.keyType)) != 0) {
+                revert KeyTypeCannotBeSuperAdmin();
+            }
+        }
         // `keccak256(abi.encode(key.keyType, keccak256(key.publicKey)))`.
         keyHash = hash(key);
         DelegationStorage storage $ = _getDelegationStorage();

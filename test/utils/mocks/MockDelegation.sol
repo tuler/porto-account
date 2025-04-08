@@ -9,7 +9,7 @@ import {Brutalizer} from "../Brutalizer.sol";
 contract MockDelegation is Delegation, Brutalizer {
     uint256 public x;
 
-    constructor(address entryPoint) payable Delegation(entryPoint) {}
+    constructor(address entryPoint) payable Delegation(entryPoint, 0) {}
 
     function setX(uint256 newX) public onlyThis {
         x = newX;
