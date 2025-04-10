@@ -513,7 +513,7 @@ contract Delegation is EIP712, GuardedExecutor {
         // Increase spend.
         if (!(keyHash == bytes32(0) || _isSuperAdmin(keyHash))) {
             SpendStorage storage spends = _getGuardedExecutorKeyStorage(keyHash).spends;
-            _incrementSpent(spends.spends[paymentToken], paymentAmount);
+            _incrementSpent(spends.spends[paymentToken], paymentToken, paymentAmount);
         }
         // Silence unused variables warning.
         userOpDigest = userOpDigest;
