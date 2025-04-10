@@ -109,7 +109,7 @@ contract GuardedExecutorTest is BaseTest {
     }
 
     function testOnlySuperAdminAndEOACanSelfExecute() public {
-        EntryPoint.UserOp memory u;
+        UserOp memory u;
         DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
         u.eoa = d.eoa;
         u.combinedGas = 10000000;
@@ -177,7 +177,7 @@ contract GuardedExecutorTest is BaseTest {
     }
 
     function testSetAndRemoveSpendLimitRevertsForSuperAdmin() public {
-        EntryPoint.UserOp memory u;
+        UserOp memory u;
         DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
 
         u.eoa = d.eoa;
@@ -228,7 +228,7 @@ contract GuardedExecutorTest is BaseTest {
     function testSetAndRemoveSpendLimit(uint256 amount) public {
         vm.warp(86400 * 100);
 
-        EntryPoint.UserOp memory u;
+        UserOp memory u;
         DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
 
         u.eoa = d.eoa;
@@ -416,7 +416,7 @@ contract GuardedExecutorTest is BaseTest {
     }
 
     function testSetSpendLimitWithTwoPeriods() public {
-        EntryPoint.UserOp memory u;
+        UserOp memory u;
         DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
 
         u.eoa = d.eoa;
@@ -474,7 +474,7 @@ contract GuardedExecutorTest is BaseTest {
     }
 
     function testSpends(bytes32) public {
-        EntryPoint.UserOp memory u;
+        UserOp memory u;
         DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
 
         u.eoa = d.eoa;
@@ -621,7 +621,7 @@ contract GuardedExecutorTest is BaseTest {
     }
 
     function _testSpendWithPassKeyViaEntryPoint(PassKey memory k, address tokenToSpend) internal {
-        EntryPoint.UserOp memory u;
+        UserOp memory u;
         GuardedExecutor.SpendInfo memory info;
 
         uint256 gExecute;
