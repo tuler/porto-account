@@ -8,6 +8,7 @@ import {Brutalizer} from "../Brutalizer.sol";
 /// Do NOT copy anything here into production code unless you really know what you are doing.
 contract MockEntryPoint is EntryPoint, Brutalizer {
     error NoRevertEncountered();
+
     constructor() payable EntryPoint(msg.sender) {}
 
     function computeDigest(UserOp calldata userOp) public view returns (bytes32) {
