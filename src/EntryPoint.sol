@@ -634,7 +634,7 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
             let m := mload(0x40) // Load the free memory pointer
             mstore(0x00, 0) // Zeroize the return slot.
             mstore(m, 0x759417a8) // `selfCallExecutePay()`
-            mstore(add(m, 0x20), simulationFlags) // Add simulationFlags as first param
+            mstore(add(m, 0x20), flags) // Add simulationFlags as first param
             mstore(add(m, 0x40), keyHash) // Add keyHash as second param
             // mstore(add(m, 0x60), 0x20) // Add offset of userOp as third param
 
@@ -647,8 +647,14 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
             // Because we don't want to return the prePayment, since the relay has already paid for the gas.
             // TODO: Should we add some identifier here, either using a return flag, or an event, that informs the caller that execute/post-payment has failed.
             if iszero(
-                call(gas(), address(), 0, add(m, 0x1c), add(0x44, encodedUserOpLength), 0x00, 0x20)
-            ) { return(0x00, 0x20) }
+                call(gas(), address(), 0, add(m, 0x1c), add(0x44, encodedUserOpLength), m, 0x20)
+            ) {
+                if and(flags, _FLAG_BUBBLE_FULL_REVERT) {
+                    returndatacopy(mload(0x40), 0x00, returndatasize())
+                    revert(mload(0x40), returndatasize())
+                }
+                return(m, 0x20)
+            }
         }
     }
 
@@ -658,12 +664,12 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
     function selfCallExecutePay() public payable {
         require(msg.sender == address(this));
 
-        uint256 simulationFlags;
+        uint256 flags;
         bytes32 keyHash;
         UserOp calldata u;
 
         assembly ("memory-safe") {
-            simulationFlags := calldataload(0x04)
+            flags := calldataload(0x04)
             keyHash := calldataload(0x24)
             u := add(0x44, calldataload(0x44))
         }
