@@ -331,6 +331,8 @@ contract EntryPoint is
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
     {
         gExecute = gasleft();
+        bytes4 err;
+
         // Setting the bit at `1 << 254` tells `_execute` that we want the
         // simulation to skip the invalid signature revert and also the 63/64 rule revert.
         // Also use `2**96 - 1` as the `combinedGas` for the very first call to `_execute`.
