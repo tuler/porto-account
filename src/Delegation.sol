@@ -135,11 +135,11 @@ contract Delegation is EIP712, GuardedExecutor {
     /// @dev The `opData` is too short.
     error OpDataTooShort();
 
-    /// @dev The PREP has already been initialized.
-    error PREPAlreadyInitialized();
-
     /// @dev The PREP `initData` is invalid.
     error InvalidPREP();
+
+    /// @dev The `keyType` cannot be super admin.
+    error KeyTypeCannotBeSuperAdmin();
 
     ////////////////////////////////////////////////////////////////////////
     // Events
@@ -466,6 +466,9 @@ contract Delegation is EIP712, GuardedExecutor {
 
     /// @dev Adds the key. If the key already exist, its expiry will be updated.
     function _addKey(Key memory key) internal virtual returns (bytes32 keyHash) {
+        if (key.isSuperAdmin) {
+            if (!_keyTypeCanBeSuperAdmin(key.keyType)) revert KeyTypeCannotBeSuperAdmin();
+        }
         // `keccak256(abi.encode(key.keyType, keccak256(key.publicKey)))`.
         keyHash = hash(key);
         DelegationStorage storage $ = _getDelegationStorage();
@@ -473,6 +476,11 @@ contract Delegation is EIP712, GuardedExecutor {
             abi.encodePacked(key.publicKey, key.expiry, key.keyType, key.isSuperAdmin)
         );
         $.keyHashes.add(keyHash);
+    }
+
+    /// @dev Returns if the `keyType` can be a super admin.
+    function _keyTypeCanBeSuperAdmin(KeyType keyType) internal view virtual returns (bool) {
+        return keyType != KeyType.P256;
     }
 
     /// @dev Removes the key corresponding to the `keyHash`. Reverts if the key does not exist.
@@ -493,11 +501,17 @@ contract Delegation is EIP712, GuardedExecutor {
         address paymentRecipient,
         uint256 paymentAmount,
         address eoa,
+        bytes32 keyHash,
         bytes32 userOpDigest,
         bytes calldata paymentSignature
     ) public virtual {
         if (!LibBit.and(msg.sender == ENTRY_POINT, eoa == address(this))) revert Unauthorized();
         TokenTransferLib.safeTransfer(paymentToken, paymentRecipient, paymentAmount);
+        // Increase spend.
+        if (!(keyHash == bytes32(0) || _isSuperAdmin(keyHash))) {
+            SpendStorage storage spends = _getGuardedExecutorKeyStorage(keyHash).spends;
+            _incrementSpent(spends.spends[paymentToken], paymentToken, paymentAmount);
+        }
         // Silence unused variables warning.
         userOpDigest = userOpDigest;
         paymentSignature = paymentSignature;
@@ -557,16 +571,18 @@ contract Delegation is EIP712, GuardedExecutor {
         }
     }
 
-    /// @dev Allows the entry point to initialize the PREP.
+    /// @dev Initializes the PREP.
+    /// If already initialized, early returns true.
     /// `initData` is encoded using ERC7821 style batch execution encoding.
     /// (ERC7821 is a variant of ERC7579).
     /// `abi.encode(calls, abi.encodePacked(bytes32(saltAndDelegation)))`,
     /// where `calls` is of type `Call[]`,
     /// and `saltAndDelegation` is `bytes32((uint256(salt) << 160) | uint160(delegation))`.
     function initializePREP(bytes calldata initData) public virtual returns (bool) {
-        if (msg.sender != ENTRY_POINT) revert Unauthorized();
+        // We can omit the check for `msg.sender == ENTRY_POINT`,
+        // having a correct `initData` will be sufficient.
         DelegationStorage storage $ = _getDelegationStorage();
-        if ($.rPREP != 0) revert PREPAlreadyInitialized();
+        if ($.rPREP != 0) return true;
 
         // Compute the digest of the calls in `initData`.
         (bytes32[] calldata pointers, bytes calldata opData) =
