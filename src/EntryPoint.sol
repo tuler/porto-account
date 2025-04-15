@@ -394,7 +394,7 @@ contract EntryPoint is
         uint256 paymentOverride = Math.saturatingMul(gCombined, u.paymentPerGas);
         u.paymentAmount = paymentOverride;
         u.paymentMaxAmount = paymentOverride;
-        address(this).call(
+        (bool success, bytes memory result) = address(this).call(
             abi.encodePacked(
                 bytes4(0xffffffff),
                 combinedGasOverride | _FLAG_BUBBLE_FULL_REVERT,
@@ -402,6 +402,11 @@ contract EntryPoint is
                 abi.encode(u)
             )
         );
+        if (!success) {
+            assembly {
+                revert(add(0x20, result), mload(result))
+            }
+        }
     }
 
     /// @dev This function is intended for self-call via `simulateExecute`.
