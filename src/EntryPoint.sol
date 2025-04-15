@@ -433,16 +433,17 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
         returns (uint256 gUsed, bytes4 err)
     {
         UserOp calldata u = _extractUserOp(encodedUserOp);
-        // TODO: add all early reverts here, to save gas in case of userOp failure.
+
+        uint256 g = Math.coalesce(uint96(combinedGasOverride), u.combinedGas);
+        uint256 gStart = gasleft();
+
         if (
             u.prePaymentMaxAmount > u.totalPaymentMaxAmount
                 || u.prePaymentAmount > u.prePaymentMaxAmount
                 || u.totalPaymentAmount > u.totalPaymentMaxAmount
         ) {
-            err = PaymentError.selector; // TODO: add more specific error here?
+            err = PaymentError.selector;
         }
-        uint256 g = Math.coalesce(uint96(combinedGasOverride), u.combinedGas);
-        uint256 gStart = gasleft();
 
         bool isSimulation = combinedGasOverride & _FLAG_IS_SIMULATION != 0;
         unchecked {
@@ -470,7 +471,7 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
 
         // Early skip the entire pay-verify-call workflow if the payer lacks tokens,
         // so that less gas is wasted when the UserOp fails.
-        if (u.prePaymentAmount != 0) {
+        if (u.prePaymentAmount != 0 && err == 0) {
             if (TokenTransferLib.balanceOf(u.paymentToken, payer) < u.prePaymentAmount) {
                 err = PaymentError.selector;
             }
