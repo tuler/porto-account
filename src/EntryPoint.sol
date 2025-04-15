@@ -396,7 +396,10 @@ contract EntryPoint is
         u.paymentMaxAmount = paymentOverride;
         (bool success,) = address(this).call(
             abi.encodePacked(
-                bytes4(0xffffffff), combinedGasOverride, uint256(uint160(msg.sender)), abi.encode(u)
+                bytes4(0xffffffff),
+                combinedGasOverride | _FLAG_BUBBLE_FULL_REVERT,
+                uint256(uint160(msg.sender)),
+                abi.encode(u)
             )
         );
         if (!success) revert SimulateExecuteFailed();
