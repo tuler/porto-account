@@ -389,6 +389,10 @@ contract EntryPoint is
         if (msg.sender.balance != type(uint256).max) {
             revert SimulationResult(gExecute, gCombined, gUsed, err);
         }
+        // If `err` is `PaymentError()`, directly revert, as `gCombined` will be zero,
+        // and `paymentOverride` will thus be zero, which won't trigger the revert
+        // in the final simulation. And we need the simulation to revert.
+        if (err == PaymentError.selector) revert PaymentError();
         // Every time I use `abi.decode` and `abi.encode` a part of me dies.
         UserOp memory u = abi.decode(encodedUserOp, (UserOp));
         uint256 paymentOverride = Math.saturatingMul(gCombined, u.paymentPerGas);
@@ -403,7 +407,7 @@ contract EntryPoint is
             )
         );
         if (!success) {
-            assembly {
+            assembly ("memory-safe") {
                 revert(add(0x20, result), mload(result))
             }
         }
