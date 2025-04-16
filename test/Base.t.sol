@@ -24,7 +24,6 @@ contract BaseTest is SoladyTest {
 
     MockEntryPoint ep;
     MockPaymentToken paymentToken;
-    address delegationImplementation;
     MockDelegation delegation;
     EIP7702Proxy eip7702Proxy;
     TargetFunctionPayload[] targetFunctionPayloads;
@@ -67,8 +66,7 @@ contract BaseTest is SoladyTest {
     function setUp() public virtual {
         ep = new MockEntryPoint();
         paymentToken = new MockPaymentToken();
-        delegationImplementation = address(new MockDelegation(address(ep)));
-        eip7702Proxy = new EIP7702Proxy(delegationImplementation, address(this));
+        eip7702Proxy = new EIP7702Proxy(address(new MockDelegation(address(ep))), address(this));
         delegation = MockDelegation(payable(eip7702Proxy));
         _etchP256Verifier();
     }
