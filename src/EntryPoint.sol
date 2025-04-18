@@ -120,7 +120,9 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
     }
 
     /// @dev A struct to hold the fields for a PreOp.
-    /// Like a UserOp with a subset of fields.
+    /// A PreOp is a set of Signed Executions by a user, which can only do restricted operations on the account.
+    /// Like adding and removing keys. PreOps can be appended along with any userOp, they are paid for by the userOp,
+    /// and are executed before the userOp verification happens.
     struct PreOp {
         /// @dev The user's address.
         /// This can be set to `address(0)`, which allows it to be
