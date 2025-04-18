@@ -1044,7 +1044,7 @@ contract EntryPoint is EIP712, Ownable, CallContextChecker, ReentrancyGuardTrans
         returns (string memory name, string memory version)
     {
         name = "EntryPoint";
-        version = "0.0.2";
+        version = "0.0.3";
     }
 
     ////////////////////////////////////////////////////////////////////////
