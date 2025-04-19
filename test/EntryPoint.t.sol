@@ -7,6 +7,7 @@ import {LibClone} from "solady/utils/LibClone.sol";
 import {MockSampleDelegateCallTarget} from "./utils/mocks/MockSampleDelegateCallTarget.sol";
 import {MockPayerWithState} from "./utils/mocks/MockPayerWithState.sol";
 import {MockPayerWithSignature} from "./utils/mocks/MockPayerWithSignature.sol";
+import {IEntryPoint} from "../src/interfaces/IEntryPoint.sol";
 
 contract EntryPointTest is BaseTest {
     struct _TestFullFlowTemps {
@@ -119,7 +120,7 @@ contract EntryPointTest is BaseTest {
 
         paymentToken.mint(d.eoa, 50 ether);
 
-        _simulateExecute(u);
+        _simulateExecute(u, IEntryPoint.SimulateMode.POSTPAY_VERIFY, 1, 10_000);
         assertEq(ep.execute(abi.encode(u)), 0);
         uint256 actualAmount = 0.1 ether;
         assertEq(paymentToken.balanceOf(address(ep)), actualAmount);
@@ -177,7 +178,7 @@ contract EntryPointTest is BaseTest {
         u.combinedGas = 10000000;
         u.signature = _sig(d, u);
 
-        _simulateExecute(u);
+        _simulateExecute(u, IEntryPoint.SimulateMode.POSTPAY_VERIFY, 1, 10_000);
         assertEq(ep.execute(abi.encode(u)), 0);
         uint256 actualAmount = 10 ether;
         assertEq(paymentToken.balanceOf(address(this)), actualAmount);
@@ -246,7 +247,8 @@ contract EntryPointTest is BaseTest {
         u.combinedGas = 10000000;
         u.signature = _sig(d, u);
 
-        (uint256 gUsed,) = _simulateExecute(u);
+        (uint256 gUsed, uint256 gCombined) =
+            _simulateExecute(u, IEntryPoint.SimulateMode.POSTPAY_VERIFY, 1, 10_000);
 
         assertEq(ep.execute(abi.encode(u)), 0);
         assertEq(paymentToken.balanceOf(address(0xabcd)), 0.5 ether * n);
@@ -274,9 +276,9 @@ contract EntryPointTest is BaseTest {
         u.combinedGas = 10000000;
         u.signature = _sig(d, u);
 
-        (, bytes4 err) = _simulateExecute(u);
+        vm.expectRevert(bytes4(keccak256("PaymentError()")));
 
-        assertEq(err, bytes4(keccak256("PaymentError()")));
+        _simulateExecute(u, IEntryPoint.SimulateMode.POSTPAY_VERIFY, 1, 10_000);
     }
 
     struct _TestFillTemps {
@@ -448,13 +450,14 @@ contract EntryPointTest is BaseTest {
         }
     }
 
-    function _simulateExecute(EntryPoint.UserOp memory u)
-        internal
-        returns (uint256 gUsed, bytes4 err)
-    {
-        EntryPoint.simulateExecuteV2(
-            EntryPoint.SimulateMode.POSTPAY_VERIFY, paymentPerGas, combinedGasOffset, encodedUserOp
-        );
+    function _simulateExecute(
+        EntryPoint.UserOp memory u,
+        IEntryPoint.SimulateMode mode,
+        uint256 paymentPerGas,
+        uint256 combinedGasOffset
+    ) internal returns (uint256 gUsed, uint256 gCombined) {
+        (gUsed, gCombined) =
+            ep.simulateExecuteV2(mode, paymentPerGas, combinedGasOffset, abi.encode(u));
     }
 
     struct _TestAuthorizeWithPreOpsAndTransferTemps {

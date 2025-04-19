@@ -31,7 +31,7 @@ interface IEntryPoint is ICommon {
         uint256 paymentPerGas,
         uint256 combinedGasOffset,
         bytes calldata encodedUserOp
-    ) external payable returns (uint256 gasUsed);
+    ) external payable returns (uint256 gasUsed, uint256 combinedGas);
 
     /// @dev Return current nonce with sequence key.
     /// @param eoa The EOA address

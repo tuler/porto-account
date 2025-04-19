@@ -19,6 +19,8 @@ import {EntryPoint, MockEntryPoint} from "./utils/mocks/MockEntryPoint.sol";
 import {ERC20, MockPaymentToken} from "./utils/mocks/MockPaymentToken.sol";
 import {GuardedExecutor} from "../src/Delegation.sol";
 
+import {IEntryPoint} from "../src/interfaces/IEntryPoint.sol";
+
 contract BaseTest is SoladyTest {
     using LibRLP for LibRLP.List;
 
@@ -243,19 +245,22 @@ contract BaseTest is SoladyTest {
         internal
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
     {
-        bytes memory data =
-            abi.encodeWithSelector(EntryPoint.simulateExecuteV2.selector, abi.encode(u));
+        (gUsed, gCombined) =
+            ep.simulateExecuteV2(IEntryPoint.SimulateMode.PREPAY_VERIFY, 1, 10_000, abi.encode(u));
 
-        (bool success, bytes memory result) = address(ep).call(data);
-        assertFalse(success);
+        gExecute = gCombined + 30_000;
+    }
 
-        assembly ("memory-safe") {
-            gUsed := mload(add(result, 0x24))
-        }
+    function _estimateGas(
+        EntryPoint.UserOp memory u,
+        IEntryPoint.SimulateMode mode,
+        uint256 paymentPerGas,
+        uint256 combinedGasOffset
+    ) internal returns (uint256 gExecute, uint256 gCombined, uint256 gUsed) {
+        (gUsed, gCombined) =
+            ep.simulateExecuteV2(mode, paymentPerGas, combinedGasOffset, abi.encode(u));
 
-        // These values can be optimized down after static analysis
-        gCombined = gUsed + 10000;
-        gExecute = gUsed + 20000;
+        gExecute = gCombined + 30_000;
     }
 
     function _mint(address token, address to, uint256 amount) internal {
