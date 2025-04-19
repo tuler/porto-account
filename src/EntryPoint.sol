@@ -274,6 +274,9 @@ contract EntryPoint is
         UserOp memory u = abi.decode(encodedUserOp, (UserOp));
         // Check if verification step is needed
         if (mode == SimulateMode.SANS_VERIFY) {
+            assembly ("memory-safe") {
+                tstore(SIMULATION_V2_FLAG, 0)
+            }
             return (gasUsed, 0);
         } else {
             uint256 gasAmount = paymentPerGas * gasUsed;
