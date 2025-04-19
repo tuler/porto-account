@@ -317,6 +317,9 @@ contract EntryPoint is
 
             // Execute was successful
             gasUsed := mload(0x04)
+
+            // Reset the simulation flag to false, in case this call is part of a batch.
+            tstore(SIMULATION_V2_FLAG, 0)
         }
     }
 
