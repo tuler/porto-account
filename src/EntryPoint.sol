@@ -231,7 +231,7 @@ contract EntryPoint is
     function simulateExecute(
         SimulateMode mode,
         uint256 paymentPerGas,
-        uint256 combinedGasOffset,
+        uint256 combinedGasFactor,
         bytes calldata encodedUserOp
     ) public payable virtual returns (uint256 gasUsed, uint256 combinedGas) {
         // Set the simulation flag to true
@@ -278,7 +278,7 @@ contract EntryPoint is
             u.totalPaymentMaxAmount += gasAmount;
         }
 
-        u.combinedGas = gasUsed + combinedGasOffset;
+        u.combinedGas += gasUsed * combinedGasFactor / 10_000; // Combined gas factor is in basis points
         combinedGas = u.combinedGas;
 
         bytes memory updatedEncodedUserOp = abi.encode(u);
@@ -290,6 +290,10 @@ contract EntryPoint is
             mstore(add(m, 0x20), 0) // During the verification run, the combinedGasOverride is 0.
             mstore(add(m, 0x40), 0x40) // encodedUserOp
             mcopy(add(m, 0x60), updatedEncodedUserOp, mload(updatedEncodedUserOp))
+
+            // Zeroize return slots
+            mstore(0x00, 0)
+            mstore(0x20, 0)
 
             let success :=
                 call(gas(), address(), 0, add(m, 0x1c), add(encodedUserOp.length, 0x64), 0x00, 0x40)
