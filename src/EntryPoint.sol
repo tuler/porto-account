@@ -72,10 +72,6 @@ contract EntryPoint is
     /// @dev The order has already been filled.
     error OrderAlreadyFilled();
 
-    /// @dev For returning the gas required and the error from a simulation.
-    /// For the meaning of the returned variables, see `simulateExecute`.
-    error SimulationResult(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
-
     /// @dev The simulate execute run has failed. Try passing in more gas to the simulation.
     error SimulateExecuteFailed();
 
@@ -133,9 +129,6 @@ contract EntryPoint is
     /// @dev Nonce prefix to signal that the payload is to be signed with EIP712 without the chain ID.
     /// This constant is a pun for "chain ID 0".
     uint16 public constant MULTICHAIN_NONCE_PREFIX = 0xc1d0;
-
-    uint256 internal constant SIMULATION_V2_FLAG =
-        0xc8bb833e36d9bbf17340b99244f2ae42032d95dc3104a387cf9f88b7b52e9509; // uint256(keccak256("SIMULATION_V2_FLAG"));
 
     /// @dev For ensuring that the remaining gas is sufficient for a self-call with
     /// overhead for cleaning up after the self-call. This also has an added benefit
@@ -201,7 +194,7 @@ contract EntryPoint is
         nonReentrant
         returns (bytes4 err)
     {
-        (, err) = _execute(encodedUserOp, 0);
+        (, err) = _execute(encodedUserOp, 0, 0);
     }
 
     /// @dev Executes the array of encoded user operations.
@@ -220,7 +213,7 @@ contract EntryPoint is
             // We reluctantly use regular Solidity to access `encodedUserOps[i]`.
             // This generates an unnecessary check for `i < encodedUserOps.length`, but helps
             // generate all the implicit calldata bound checks on `encodedUserOps[i]`.
-            (, errs[i]) = _execute(encodedUserOps[i], 0);
+            (, errs[i]) = _execute(encodedUserOps[i], 0, 0);
         }
     }
 
@@ -243,8 +236,6 @@ contract EntryPoint is
     ) public payable virtual returns (uint256 gasUsed, uint256 combinedGas) {
         // Set the simulation flag to true
         assembly ("memory-safe") {
-            tstore(SIMULATION_V2_FLAG, 1)
-
             let m := mload(0x40)
             mstore(m, 0x10da5c7e) // function selector of simulateSelfCall TODO: mine to 0xffffffff
             mstore(add(m, 0x20), 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff) // During the primary run, the combinedGasOverride is type(uint256).max
@@ -274,9 +265,6 @@ contract EntryPoint is
         UserOp memory u = abi.decode(encodedUserOp, (UserOp));
         // Check if verification step is needed
         if (mode == SimulateMode.SANS_VERIFY) {
-            assembly ("memory-safe") {
-                tstore(SIMULATION_V2_FLAG, 0)
-            }
             return (gasUsed, 0);
         } else {
             uint256 gasAmount = paymentPerGas * gasUsed;
@@ -320,15 +308,12 @@ contract EntryPoint is
 
             // Execute was successful
             gasUsed := mload(0x04)
-
-            // Reset the simulation flag to false, in case this call is part of a batch.
-            tstore(SIMULATION_V2_FLAG, 0)
         }
     }
 
     function simulateSelfCall(uint256 combinedGasOverride, bytes calldata encodedUserOp) public {
         // If Simulation Fails, then it will revert here.
-        (uint256 gUsed, bytes4 err) = _execute(encodedUserOp, combinedGasOverride);
+        (uint256 gUsed, bytes4 err) = _execute(encodedUserOp, combinedGasOverride, 1);
 
         if (err != 0) {
             assembly ("memory-safe") {
@@ -339,12 +324,6 @@ contract EntryPoint is
 
         // If Simulation Passes, then it will revert here.
         revert SimulationPassed(gUsed);
-    }
-
-    function _isSimulationV2() internal view returns (bool isSimulation) {
-        assembly ("memory-safe") {
-            isSimulation := tload(SIMULATION_V2_FLAG)
-        }
     }
 
     /// @dev Extracts the UserOp from the calldata bytes, with minimal checks.
@@ -378,11 +357,16 @@ contract EntryPoint is
     }
 
     /// @dev Executes a single encoded UserOp.
-    function _execute(bytes calldata encodedUserOp, uint256 combinedGasOverride)
-        internal
-        virtual
-        returns (uint256 gUsed, bytes4 err)
-    {
+    /// @dev If simulationFlags is non-zero, then all errors are bubbled up.
+    /// Currently there can only be 2 modes - simulation mode, and execution mode.
+    /// But we use a uint256 for efficient stack operations, and more flexiblity in the future.
+    /// Note: We keep the simulationFlags in the stack/memory (TSTORE doesn't work) to make sure they are reset in each new call context,
+    /// to provide protection against attacks which could spoof the execute function to believe it is in simulation mode.
+    function _execute(
+        bytes calldata encodedUserOp,
+        uint256 combinedGasOverride,
+        uint256 simulationFlags
+    ) internal virtual returns (uint256 gUsed, bytes4 err) {
         UserOp calldata u = _extractUserOp(encodedUserOp);
 
         uint256 g = Math.coalesce(uint96(combinedGasOverride), u.combinedGas);
@@ -395,7 +379,7 @@ contract EntryPoint is
         ) {
             err = PaymentError.selector;
 
-            if (_isSimulationV2()) {
+            if (simulationFlags == 1) {
                 revert PaymentError();
             }
         }
@@ -430,7 +414,7 @@ contract EntryPoint is
             if (TokenTransferLib.balanceOf(u.paymentToken, payer) < u.prePaymentAmount) {
                 err = PaymentError.selector;
 
-                if (_isSimulationV2()) {
+                if (simulationFlags == 1) {
                     revert PaymentError();
                 }
             }
@@ -444,7 +428,8 @@ contract EntryPoint is
                 // Copy the encoded user op to the memory to be ready to pass to the self call.
                 calldatacopy(add(m, 0x40), encodedUserOp.offset, encodedUserOp.length)
                 mstore(m, 0x00000000) // `selfCallPayVerifyCall537021665()`.
-                mstore(add(m, 0x20), shl(96, shr(96, combinedGasOverride)))
+                // The word after the function selector contains the simulation flags.
+                mstore(add(m, 0x20), simulationFlags)
                 mstore(0x00, 0) // Zeroize the return slot.
 
                 // To prevent griefing, we need to do a non-reverting gas-limited self call.
@@ -457,7 +442,7 @@ contract EntryPoint is
 
                 if iszero(selfCallSuccess) {
                     // If it is a simulation, we simply revert with the full error.
-                    if tload(SIMULATION_V2_FLAG) {
+                    if simulationFlags {
                         returndatacopy(mload(0x40), 0x00, returndatasize())
                         revert(mload(0x40), returndatasize())
                     }
@@ -502,10 +487,10 @@ contract EntryPoint is
         require(msg.sender == address(this));
 
         UserOp calldata u;
-        uint256 flags;
+        uint256 simulationFlags;
         assembly ("memory-safe") {
             u := add(0x24, calldataload(0x24))
-            flags := calldataload(0x04)
+            simulationFlags := calldataload(0x04)
         }
         address eoa = u.eoa;
         // Verify the nonce, early reverting to save gas.
@@ -542,7 +527,7 @@ contract EntryPoint is
                 let success :=
                     call(gas(), eoa, 0, add(m, 0x1c), add(0x64, initData.length), m, 0x20)
                 if iszero(and(eq(mload(m), 1), success)) {
-                    if tload(SIMULATION_V2_FLAG) {
+                    if simulationFlags {
                         returndatacopy(mload(0x40), 0x00, returndatasize())
                         revert(mload(0x40), returndatasize())
                     }
@@ -551,7 +536,7 @@ contract EntryPoint is
             }
         }
         // Handle the sub UserOps after the PREP (if any), and before the `_verify`.
-        if (u.encodedPreOps.length != 0) _handlePreOps(eoa, flags, u.encodedPreOps);
+        if (u.encodedPreOps.length != 0) _handlePreOps(eoa, simulationFlags, u.encodedPreOps);
 
         // If `_verify` is invalid, just revert.
         // The verification gas is determined by `executionData` and the delegation logic.
@@ -559,8 +544,8 @@ contract EntryPoint is
         // delegation is not changed, and the `keyHash` is not revoked
         // in the window between off-chain simulation and on-chain execution.
         (bool isValid, bytes32 keyHash, bytes32 digest) = _verify(u);
-        // if (!isValid) if (flags & _FLAG_IS_SIMULATION == 0) revert VerificationError();
-        if (_isSimulationV2()) {
+
+        if (simulationFlags == 1) {
             isValid = true;
         }
         if (!isValid) revert VerificationError();
@@ -592,7 +577,7 @@ contract EntryPoint is
             let m := mload(0x40) // Load the free memory pointer
             mstore(0x00, 0) // Zeroize the return slot.
             mstore(m, 0x759417a8) // `selfCallExecutePay()`
-            mstore(add(m, 0x20), flags) // Add simulationFlags as first param
+            mstore(add(m, 0x20), simulationFlags) // Add simulationFlags as first param
             mstore(add(m, 0x40), keyHash) // Add keyHash as second param
             mstore(add(m, 0x60), digest) // Add digest as third param
 
@@ -610,7 +595,7 @@ contract EntryPoint is
             if iszero(
                 call(gas(), address(), 0, add(m, 0x1c), add(0x44, encodedUserOpLength), m, 0x20)
             ) {
-                if tload(SIMULATION_V2_FLAG) {
+                if simulationFlags {
                     returndatacopy(mload(0x40), 0x00, returndatasize())
                     revert(mload(0x40), returndatasize())
                 }
@@ -625,13 +610,13 @@ contract EntryPoint is
     function selfCallExecutePay() public payable {
         require(msg.sender == address(this));
 
-        uint256 flags;
+        uint256 simulationFlags;
         bytes32 keyHash;
         bytes32 digest;
         UserOp calldata u;
 
         assembly ("memory-safe") {
-            flags := calldataload(0x04)
+            simulationFlags := calldataload(0x04)
             keyHash := calldataload(0x24)
             digest := calldataload(0x44)
             // Non standard decoding of the userOp.
@@ -651,7 +636,7 @@ contract EntryPoint is
         assembly ("memory-safe") {
             mstore(0x00, 0) // Zeroize the return slot.
             if iszero(call(gas(), eoa, 0, add(0x20, data), mload(data), 0x00, 0x20)) {
-                if tload(SIMULATION_V2_FLAG) {
+                if simulationFlags {
                     returndatacopy(mload(0x40), 0x00, returndatasize())
                     revert(mload(0x40), returndatasize())
                 }
@@ -692,8 +677,7 @@ contract EntryPoint is
             if (eoa != parentEOA) revert InvalidPreOpEOA();
 
             (bool isValid, bytes32 keyHash,) = _verify(u);
-            // if (!isValid) if (simulationFlags & 1 == 0) revert PreOpVerificationError();
-            if (_isSimulationV2()) {
+            if (simulationFlags == 1) {
                 isValid = true;
             }
             if (!isValid) revert PreOpVerificationError();
@@ -714,7 +698,7 @@ contract EntryPoint is
                 mstore(0x00, 0) // Zeroize the return slot.
                 if iszero(call(gas(), eoa, 0, add(0x20, data), mload(data), 0x00, 0x20)) {
                     // If this is a simulation via `simulateFailed`, bubble up the whole revert.
-                    if tload(SIMULATION_V2_FLAG) {
+                    if simulationFlags {
                         returndatacopy(mload(0x40), 0x00, returndatasize())
                         revert(mload(0x40), returndatasize())
                     }
