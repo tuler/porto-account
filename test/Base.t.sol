@@ -238,6 +238,7 @@ contract BaseTest is SoladyTest {
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
     {
         u.signature = abi.encodePacked(keccak256("a"), keccak256("b"), keyHash, uint8(0));
+
         return _estimateGas(u);
     }
 
@@ -245,10 +246,13 @@ contract BaseTest is SoladyTest {
         internal
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
     {
+        // We found this 10_800 value empirically. This might look different for real transactions.
+        // But the offset should still be close to this ballpark.
+        // We try to keep these values as tight as possible in the test, to catch any edge cases early.
         (gUsed, gCombined) =
-            ep.simulateExecuteV2(IEntryPoint.SimulateMode.PREPAY_VERIFY, 1, 10_000, abi.encode(u));
+            ep.simulateExecuteV2(IEntryPoint.SimulateMode.PREPAY_VERIFY, 1, 10_800, abi.encode(u));
 
-        gExecute = gCombined + 30_000;
+        gExecute = gCombined + 20_000;
     }
 
     function _estimateGas(
@@ -260,7 +264,7 @@ contract BaseTest is SoladyTest {
         (gUsed, gCombined) =
             ep.simulateExecuteV2(mode, paymentPerGas, combinedGasOffset, abi.encode(u));
 
-        gExecute = gCombined + 30_000;
+        gExecute = gCombined + 20_000;
     }
 
     function _mint(address token, address to, uint256 amount) internal {

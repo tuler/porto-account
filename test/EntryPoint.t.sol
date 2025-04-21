@@ -247,13 +247,12 @@ contract EntryPointTest is BaseTest {
         u.combinedGas = 10000000;
         u.signature = _sig(d, u);
 
-        (uint256 gUsed, uint256 gCombined) =
-            _simulateExecute(u, IEntryPoint.SimulateMode.POSTPAY_VERIFY, 1, 10_000);
+        (uint256 gExecute,,) = _estimateGas(u, IEntryPoint.SimulateMode.POSTPAY_VERIFY, 1, 10_000);
 
-        assertEq(ep.execute(abi.encode(u)), 0);
+        assertEq(ep.execute{gas: gExecute}(abi.encode(u)), 0);
         assertEq(paymentToken.balanceOf(address(0xabcd)), 0.5 ether * n);
         // TODO: Don't know what this checks
-        // assertEq(paymentToken.balanceOf(d.eoa), 100 ether - (0.5 ether * n + (gUsed + 50000) * 1e9));
+        assertEq(paymentToken.balanceOf(d.eoa), 100 ether - (u.prePaymentAmount + 0.5 ether * n));
         assertEq(ep.getNonce(d.eoa, 0), 1);
     }
 
@@ -723,19 +722,7 @@ contract EntryPointTest is BaseTest {
             u.signature =
                 abi.encodePacked(keccak256("a"), keccak256("b"), kSession.keyHash, uint8(0));
 
-            (t.success, t.result) =
-                address(ep).call(abi.encodeWithSignature("simulateExecute(bytes)", abi.encode(u)));
-
-            assertFalse(t.success);
-            assertEq(bytes4(LibBytes.load(t.result, 0x00)), EntryPoint.SimulationResult.selector);
-
-            t.gExecute = uint256(LibBytes.load(t.result, 0x04));
-            t.gCombined = uint256(LibBytes.load(t.result, 0x24));
-            t.gUsed = uint256(LibBytes.load(t.result, 0x44));
-            emit LogUint("gExecute", t.gExecute);
-            emit LogUint("gCombined", t.gCombined);
-            emit LogUint("gUsed", t.gUsed);
-            assertEq(bytes4(LibBytes.load(t.result, 0x64)), 0);
+            (t.gExecute, t.gCombined, t.gUsed) = _estimateGas(u);
 
             u.combinedGas = t.gCombined;
             u.signature = _sig(kSession, u);
