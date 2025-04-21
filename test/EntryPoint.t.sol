@@ -456,7 +456,7 @@ contract EntryPointTest is BaseTest {
         uint256 combinedGasOffset
     ) internal returns (uint256 gUsed, uint256 gCombined) {
         (gUsed, gCombined) =
-            ep.simulateExecuteV2(mode, paymentPerGas, combinedGasOffset, abi.encode(u));
+            ep.simulateExecute(mode, paymentPerGas, combinedGasOffset, abi.encode(u));
     }
 
     struct _TestAuthorizeWithPreOpsAndTransferTemps {
@@ -821,7 +821,14 @@ contract EntryPointTest is BaseTest {
         }
         if ((t.unapprovedEntryPoint && u.totalPaymentAmount != 0)) {
             assertEq(ep.execute(abi.encode(u)), bytes4(keccak256("Unauthorized()")));
-            assertEq(ep.getNonce(u.eoa, 0), u.nonce);
+
+            // TODO: Add this edge case to changelog, where the nonce always gets incremented, when prePaymentAmount is 0.
+            if (u.prePaymentAmount != 0) {
+                assertEq(ep.getNonce(u.eoa, 0), u.nonce);
+            } else {
+                assertEq(ep.getNonce(u.eoa, 0), u.nonce + 1);
+            }
+
             assertEq(_balanceOf(t.token, u.payer), t.balanceBefore);
             assertEq(_balanceOf(address(0), address(0xabcd)), 0);
         } else if (t.isWithState && u.totalPaymentAmount > t.funds && u.totalPaymentAmount != 0) {

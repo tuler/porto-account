@@ -26,7 +26,7 @@ interface IEntryPoint is ICommon {
         payable
         returns (bytes4[] memory errs);
 
-    function simulateExecuteV2(
+    function simulateExecute(
         SimulateMode mode,
         uint256 paymentPerGas,
         uint256 combinedGasOffset,

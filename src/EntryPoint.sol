@@ -228,7 +228,7 @@ contract EntryPoint is
     /// If the SimulationMode is set to SANS_VERIFY, then only the primary simulation run is made.
     /// @dev If the execution fails during either of the simulation runs, the whole function reverts.
     /// @dev In SANS_VERIFY, the returned combinedGas is always 0.
-    function simulateExecuteV2(
+    function simulateExecute(
         SimulateMode mode,
         uint256 paymentPerGas,
         uint256 combinedGasOffset,

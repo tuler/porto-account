@@ -250,7 +250,7 @@ contract BaseTest is SoladyTest {
         // But the offset should still be close to this ballpark.
         // We try to keep these values as tight as possible in the test, to catch any edge cases early.
         (gUsed, gCombined) =
-            ep.simulateExecuteV2(IEntryPoint.SimulateMode.PREPAY_VERIFY, 1, 10_800, abi.encode(u));
+            ep.simulateExecute(IEntryPoint.SimulateMode.PREPAY_VERIFY, 1, 10_800, abi.encode(u));
 
         gExecute = gCombined + 20_000;
     }
@@ -262,7 +262,7 @@ contract BaseTest is SoladyTest {
         uint256 combinedGasOffset
     ) internal returns (uint256 gExecute, uint256 gCombined, uint256 gUsed) {
         (gUsed, gCombined) =
-            ep.simulateExecuteV2(mode, paymentPerGas, combinedGasOffset, abi.encode(u));
+            ep.simulateExecute(mode, paymentPerGas, combinedGasOffset, abi.encode(u));
 
         gExecute = gCombined + 20_000;
     }
