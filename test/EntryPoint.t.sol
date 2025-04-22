@@ -455,9 +455,16 @@ contract EntryPointTest is BaseTest {
         uint256 paymentPerGas,
         uint256 combinedGasIncrement
     ) internal returns (uint256 gUsed, uint256 gCombined) {
-        (gUsed, gCombined) = simulator.simulateCombinedGas(
+        uint256 snapshot = vm.snapshotState();
+
+        // Set the simulator to have max balance, so that it can run in state override mode.
+        // This is meant to mimic an offchain state override.
+        vm.deal(address(simulator), type(uint256).max);
+        (gUsed, gCombined) = simulator.simulateV1Logs(
             address(ep), isPrePayment, paymentPerGas, combinedGasIncrement, abi.encode(u)
         );
+
+        vm.revertToStateAndDelete(snapshot);
     }
 
     struct _TestAuthorizeWithPreOpsAndTransferTemps {

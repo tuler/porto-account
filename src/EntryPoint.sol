@@ -90,6 +90,9 @@ contract EntryPoint is
     /// @dev The simulation has passed.
     error SimulationPassed(uint256 gUsed);
 
+    /// @dev The state override has not happened.
+    error StateOverrideError();
+
     ////////////////////////////////////////////////////////////////////////
     // Events
     ////////////////////////////////////////////////////////////////////////
@@ -220,11 +223,16 @@ contract EntryPoint is
     /// @dev Minimal function, to allow hooking into the _execute function with the simulation flags set to true.
     /// When simulationFlags is set to true, all errors are bubbled up. Also signature verification always returns true.
     /// But the codepaths for signature verification are still hit, for correct gas measurement.
-    /// @dev This function always reverts. If the simulation is successful, then it reverts with `SimulationPassed` error.
-    function simulateExecute(uint256 combinedGasOverride, bytes calldata encodedUserOp)
-        external
-        payable
-    {
+    /// @dev If `isStateOverride` is false, then this function will always revert. If the simulation is successful, then it reverts with `SimulationPassed` error.
+    /// If `isStateOverride` is true, then this function will not revert if the simulation is successful.
+    /// But the balance of msg.sender has to be equal to type(uint256).max, to prove that a state override has been made offchain,
+    /// and this is not an onchain call. This mode has been added so that receipt logs can be generated for `eth_simulateV1`
+    /// @return gasUsed The amount of gas used by the execution. (Only returned if `isStateOverride` is true)
+    function simulateExecute(
+        bool isStateOverride,
+        uint256 combinedGasOverride,
+        bytes calldata encodedUserOp
+    ) external payable returns (uint256) {
         // If Simulation Fails, then it will revert here.
         (uint256 gUsed, bytes4 err) = _execute(encodedUserOp, combinedGasOverride, 1);
 
@@ -235,8 +243,16 @@ contract EntryPoint is
             }
         }
 
-        // If Simulation Passes, then it will revert here.
-        revert SimulationPassed(gUsed);
+        if (isStateOverride) {
+            if (msg.sender.balance == type(uint256).max) {
+                return gUsed;
+            } else {
+                revert StateOverrideError();
+            }
+        } else {
+            // If Simulation Passes, then it will revert here.
+            revert SimulationPassed(gUsed);
+        }
     }
 
     /// @dev Extracts the UserOp from the calldata bytes, with minimal checks.
