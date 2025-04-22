@@ -120,7 +120,7 @@ contract EntryPointTest is BaseTest {
 
         paymentToken.mint(d.eoa, 50 ether);
 
-        _simulateExecute(u, IEntryPoint.SimulateMode.POSTPAY_VERIFY, 1, 10_000);
+        _simulateExecute(u, false, 1, 11_000);
         assertEq(ep.execute(abi.encode(u)), 0);
         uint256 actualAmount = 0.1 ether;
         assertEq(paymentToken.balanceOf(address(ep)), actualAmount);
@@ -178,7 +178,7 @@ contract EntryPointTest is BaseTest {
         u.combinedGas = 10000000;
         u.signature = _sig(d, u);
 
-        _simulateExecute(u, IEntryPoint.SimulateMode.POSTPAY_VERIFY, 1, 10_000);
+        _simulateExecute(u, false, 1, 11_000);
         assertEq(ep.execute(abi.encode(u)), 0);
         uint256 actualAmount = 10 ether;
         assertEq(paymentToken.balanceOf(address(this)), actualAmount);
@@ -247,7 +247,7 @@ contract EntryPointTest is BaseTest {
         u.combinedGas = 10000000;
         u.signature = _sig(d, u);
 
-        (uint256 gExecute,,) = _estimateGas(u, IEntryPoint.SimulateMode.POSTPAY_VERIFY, 1, 10_000);
+        (uint256 gExecute,,) = _estimateGas(u);
 
         assertEq(ep.execute{gas: gExecute}(abi.encode(u)), 0);
         assertEq(paymentToken.balanceOf(address(0xabcd)), 0.5 ether * n);
@@ -277,7 +277,7 @@ contract EntryPointTest is BaseTest {
 
         vm.expectRevert(bytes4(keccak256("PaymentError()")));
 
-        _simulateExecute(u, IEntryPoint.SimulateMode.POSTPAY_VERIFY, 1, 10_000);
+        _simulateExecute(u, false, 1, 11_000);
     }
 
     struct _TestFillTemps {
@@ -451,12 +451,13 @@ contract EntryPointTest is BaseTest {
 
     function _simulateExecute(
         EntryPoint.UserOp memory u,
-        IEntryPoint.SimulateMode mode,
+        bool isPrePayment,
         uint256 paymentPerGas,
-        uint256 combinedGasOffset
+        uint256 combinedGasIncrement
     ) internal returns (uint256 gUsed, uint256 gCombined) {
-        (gUsed, gCombined) =
-            ep.simulateExecute(mode, paymentPerGas, combinedGasOffset, abi.encode(u));
+        (gUsed, gCombined) = simulator.simulateCombinedGas(
+            address(ep), isPrePayment, paymentPerGas, combinedGasIncrement, abi.encode(u)
+        );
     }
 
     struct _TestAuthorizeWithPreOpsAndTransferTemps {
@@ -718,6 +719,7 @@ contract EntryPointTest is BaseTest {
 
         // Test gas estimation.
         if (_randomChance(16)) {
+            u.combinedGas += 10_000;
             // Fill with some junk signature, but with the session `keyHash`.
             u.signature =
                 abi.encodePacked(keccak256("a"), keccak256("b"), kSession.keyHash, uint8(0));

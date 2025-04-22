@@ -217,105 +217,14 @@ contract EntryPoint is
         }
     }
 
-    /// @notice This is a helper simulate function that allows devs to fetch the gas needed for UserOps
-    /// @dev There are 2 kinds of simulation runs
-    /// 1. Primary - Simulates the userOp with infinite combined gas, and returns a gasUsed number.
-    /// 2. Verification - Uses the gasUsed number from the primary gas run, to add to the paymentAmount value.
-    /// Using the formula --> gasAmount = gasUsed * paymentPerGas.
-    /// If the SimulationMode is set to PREPAY_VERIFY, then gasAmount is added to userOp.prePayment.
-    /// If the SimulationMode is set to POSTPAY_VERIFY, then gasAmount is added to userOp.totalPayment. (effectively adding gas amount to postPayment)
-    /// In addition to the gasAmounts, combined gas in a verification run is set as `userOp.combinedGas = gasUsed + combinedGasOffset`
-    /// If the SimulationMode is set to SANS_VERIFY, then only the primary simulation run is made.
-    /// @dev If the execution fails during either of the simulation runs, the whole function reverts.
-    /// @dev In SANS_VERIFY, the returned combinedGas is always 0.
-    function simulateExecute(
-        SimulateMode mode,
-        uint256 paymentPerGas,
-        uint256 combinedGasFactor,
-        bytes calldata encodedUserOp
-    ) public payable virtual returns (uint256 gasUsed, uint256 combinedGas) {
-        // Set the simulation flag to true
-        assembly ("memory-safe") {
-            let m := mload(0x40)
-            mstore(m, 0x10da5c7e) // function selector of simulateSelfCall TODO: mine to 0xffffffff
-            mstore(add(m, 0x20), 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff) // During the primary run, the combinedGasOverride is type(uint256).max
-            mstore(add(m, 0x40), 0x40) // encodedUserOp
-            mstore(add(m, 0x60), encodedUserOp.length)
-            calldatacopy(add(m, 0x80), encodedUserOp.offset, encodedUserOp.length)
-
-            let success :=
-                call(gas(), address(), 0, add(m, 0x1c), add(encodedUserOp.length, 0x64), 0x00, 0x40)
-
-            if success {
-                // Simulate Self Call should *always* fail
-                revert(0x00, 0x00)
-            }
-
-            let err := shl(224, shr(224, mload(0)))
-            // Check if first 4 bytes are equal to SimulationPassed(uint256)
-            if iszero(eq(err, 0x4f0c028c00000000000000000000000000000000000000000000000000000000)) {
-                returndatacopy(m, 0x00, returndatasize())
-                revert(m, returndatasize())
-            }
-
-            // Execute was successful
-            gasUsed := mload(0x04)
-        }
-
-        UserOp memory u = abi.decode(encodedUserOp, (UserOp));
-        // Check if verification step is needed
-        if (mode == SimulateMode.SANS_VERIFY) {
-            return (gasUsed, 0);
-        } else {
-            uint256 gasAmount = paymentPerGas * gasUsed;
-
-            if (mode == SimulateMode.PREPAY_VERIFY) {
-                u.prePaymentAmount += gasAmount;
-                u.prePaymentMaxAmount += gasAmount;
-            }
-
-            u.totalPaymentAmount += gasAmount;
-            u.totalPaymentMaxAmount += gasAmount;
-        }
-
-        u.combinedGas += gasUsed * combinedGasFactor / 10_000; // Combined gas factor is in basis points
-        combinedGas = u.combinedGas;
-
-        bytes memory updatedEncodedUserOp = abi.encode(u);
-
-        // Set the simulation flag to true
-        assembly ("memory-safe") {
-            let m := mload(0x40)
-            mstore(m, 0x10da5c7e) // function selector of simulateSelfCall
-            mstore(add(m, 0x20), 0) // During the verification run, the combinedGasOverride is 0.
-            mstore(add(m, 0x40), 0x40) // encodedUserOp
-            mcopy(add(m, 0x60), updatedEncodedUserOp, mload(updatedEncodedUserOp))
-
-            // Zeroize return slots
-            mstore(0x00, 0)
-            mstore(0x20, 0)
-
-            let success :=
-                call(gas(), address(), 0, add(m, 0x1c), add(encodedUserOp.length, 0x64), 0x00, 0x40)
-
-            if success {
-                // Simulate Self Call should *always* fail
-                revert(0x00, 0x00)
-            }
-
-            let err := shl(224, shr(224, mload(0)))
-            // Check if first 4 bytes are equal to SimulationPassed(uint256)
-            if iszero(eq(err, 0x4f0c028c00000000000000000000000000000000000000000000000000000000)) {
-                returndatacopy(m, 0x00, returndatasize())
-                revert(m, returndatasize())
-            }
-
-            // Execute was successful
-            gasUsed := mload(0x04)
-        }
-    }
-
-    function simulateSelfCall(uint256 combinedGasOverride, bytes calldata encodedUserOp) public {
+    /// @dev Minimal function, to allow hooking into the _execute function with the simulation flags set to true.
+    /// When simulationFlags is set to true, all errors are bubbled up. Also signature verification always returns true.
+    /// But the codepaths for signature verification are still hit, for correct gas measurement.
+    /// @dev This function always reverts. If the simulation is successful, then it reverts with `SimulationPassed` error.
+    function simulateExecute(uint256 combinedGasOverride, bytes calldata encodedUserOp)
+        external
+        payable
+    {
         // If Simulation Fails, then it will revert here.
         (uint256 gUsed, bytes4 err) = _execute(encodedUserOp, combinedGasOverride, 1);
 

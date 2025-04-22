@@ -20,6 +20,7 @@ import {ERC20, MockPaymentToken} from "./utils/mocks/MockPaymentToken.sol";
 import {GuardedExecutor} from "../src/Delegation.sol";
 
 import {IEntryPoint} from "../src/interfaces/IEntryPoint.sol";
+import {Simulator} from "../src/Simulator.sol";
 
 contract BaseTest is SoladyTest {
     using LibRLP for LibRLP.List;
@@ -30,6 +31,7 @@ contract BaseTest is SoladyTest {
     MockDelegation delegation;
     EIP7702Proxy eip7702Proxy;
     TargetFunctionPayload[] targetFunctionPayloads;
+    Simulator simulator;
 
     struct TargetFunctionPayload {
         address by;
@@ -72,6 +74,7 @@ contract BaseTest is SoladyTest {
         delegationImplementation = address(new MockDelegation(address(ep)));
         eip7702Proxy = new EIP7702Proxy(delegationImplementation, address(this));
         delegation = MockDelegation(payable(eip7702Proxy));
+        simulator = new Simulator();
         _etchP256Verifier();
     }
 
@@ -246,23 +249,21 @@ contract BaseTest is SoladyTest {
         internal
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
     {
-        // We found this 10_800 value empirically. This might look different for real transactions.
-        // But the offset should still be close to this ballpark.
-        // We try to keep these values as tight as possible in the test, to catch any edge cases early.
         (gUsed, gCombined) =
-            ep.simulateExecute(IEntryPoint.SimulateMode.PREPAY_VERIFY, 1, 10_800, abi.encode(u));
+            simulator.simulateCombinedGas(address(ep), true, 1, 11_000, abi.encode(u));
 
         gExecute = gCombined + 20_000;
     }
 
     function _estimateGas(
         EntryPoint.UserOp memory u,
-        IEntryPoint.SimulateMode mode,
+        bool isPrePayment,
         uint256 paymentPerGas,
-        uint256 combinedGasOffset
+        uint256 combinedGasIncrement
     ) internal returns (uint256 gExecute, uint256 gCombined, uint256 gUsed) {
-        (gUsed, gCombined) =
-            ep.simulateExecute(mode, paymentPerGas, combinedGasOffset, abi.encode(u));
+        (gUsed, gCombined) = simulator.simulateCombinedGas(
+            address(ep), isPrePayment, paymentPerGas, combinedGasIncrement, abi.encode(u)
+        );
 
         gExecute = gCombined + 20_000;
     }

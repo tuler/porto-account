@@ -6,12 +6,6 @@ import {ICommon} from "../interfaces/ICommon.sol";
 /// @title IEntryPoint
 /// @notice Interface for the EntryPoint contract
 interface IEntryPoint is ICommon {
-    enum SimulateMode {
-        SANS_VERIFY,
-        PREPAY_VERIFY,
-        POSTPAY_VERIFY
-    }
-
     /// @dev Executes a single encoded user operation.
     /// @param encodedUserOp The encoded user operation
     /// @return err The error selector (non-zero if there is an error)
@@ -26,12 +20,13 @@ interface IEntryPoint is ICommon {
         payable
         returns (bytes4[] memory errs);
 
-    function simulateExecute(
-        SimulateMode mode,
-        uint256 paymentPerGas,
-        uint256 combinedGasOffset,
-        bytes calldata encodedUserOp
-    ) external payable returns (uint256 gasUsed, uint256 combinedGas);
+    /// @dev Minimal function, to allow hooking into the _execute function with the simulation flags set to true.
+    /// When simulationFlags is set to true, all errors are bubbled up. Also signature verification always returns true.
+    /// But the codepaths for signature verification are still hit, for correct gas measurement.
+    /// @dev This function always reverts. If the simulation is successful, then it reverts with `SimulationPassed` error.
+    function simulateExecute(uint256 combinedGasOverride, bytes calldata encodedUserOp)
+        external
+        payable;
 
     /// @dev Return current nonce with sequence key.
     /// @param eoa The EOA address
