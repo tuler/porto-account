@@ -286,9 +286,13 @@ contract EntryPoint is
         uint256 gStart = gasleft();
 
         if (
-            u.prePaymentMaxAmount > u.totalPaymentMaxAmount
-                || u.prePaymentAmount > u.prePaymentMaxAmount
-                || u.totalPaymentAmount > u.totalPaymentMaxAmount
+            LibBit.or(
+                u.prePaymentAmount > u.prePaymentMaxAmount,
+                LibBit.or(
+                    u.prePaymentMaxAmount > u.totalPaymentMaxAmount,
+                    u.totalPaymentAmount > u.totalPaymentMaxAmount
+                )
+            )
         ) {
             err = PaymentError.selector;
 
@@ -489,7 +493,7 @@ contract EntryPoint is
         assembly ("memory-safe") {
             let m := mload(0x40) // Load the free memory pointer
             mstore(0x00, 0) // Zeroize the return slot.
-            mstore(m, 0x759417a8) // `selfCallExecutePay()`
+            mstore(m, 0x00000001) // `selfCallExecutePay1395256087()`
             mstore(add(m, 0x20), simulationFlags) // Add simulationFlags as first param
             mstore(add(m, 0x40), keyHash) // Add keyHash as second param
             mstore(add(m, 0x60), digest) // Add digest as third param
@@ -520,7 +524,7 @@ contract EntryPoint is
     /// @dev This function is only intended for self-call.
     /// We use this function to call the delegation.execute function, and then the delegation.pay function for post-payment.
     /// Self-calling this function ensures, that if the post payment reverts, then the execute function will also revert.
-    function selfCallExecutePay() public payable {
+    function selfCallExecutePay1395256087() public payable {
         require(msg.sender == address(this));
 
         uint256 simulationFlags;
@@ -558,7 +562,7 @@ contract EntryPoint is
             }
         }
 
-        uint256 remainingPaymentAmount = u.totalPaymentAmount - u.prePaymentAmount;
+        uint256 remainingPaymentAmount = Math.rawSub(u.totalPaymentAmount, u.prePaymentAmount);
         if (remainingPaymentAmount != 0) {
             _pay(remainingPaymentAmount, keyHash, digest, u);
         }
@@ -732,6 +736,9 @@ contract EntryPoint is
             calldatacopy(add(m, 0xe0), u, encodedSize)
 
             // TODO: If pay reverts, we now send a revert back instead of ignoring. This is a breaking change, add to changeset.
+            // We revert here, so that if the post payment fails, the execution is also reverted.
+            // The revert for post payment is caught inside the selfCallExecutePay function.
+            // The revert for prePayment is caught inside the selfCallPayVerify function.
             if iszero(
                 call(
                     gas(), // gas
