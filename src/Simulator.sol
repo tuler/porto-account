@@ -210,6 +210,9 @@ contract Simulator {
         }
     }
 
+    /// @dev Same as simulateCombinedGas, but with an additional verification run
+    /// that generates a successful non reverting state override simulation.
+    /// Which can be used in eth_simulateV1 to get the trace.
     function simulateV1Logs(
         address ep,
         bool isPrePayment,
