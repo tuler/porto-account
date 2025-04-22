@@ -68,8 +68,16 @@ contract Simulator {
         address ep,
         bool isStateOverride,
         uint256 combinedGasOverride,
-        bytes memory encodedUserOp
+        ICommon.UserOp memory u
     ) internal returns (uint256 gasUsed) {
+        uint256 mCache;
+        // Cache the free memory pointer
+        assembly ("memory-safe") {
+            mCache := mload(0x40)
+        }
+
+        bytes memory encodedUserOp = abi.encode(u);
+
         // Set the simulation flag to true
         assembly ("memory-safe") {
             let m := mload(0x40)
@@ -104,6 +112,12 @@ contract Simulator {
                     gasUsed := mload(0x00)
                 }
             }
+        }
+
+        // Restore the free memory pointer
+        // We do this so that abi.encode doesn't keep expanding memory, when used in a loop
+        assembly ("memory-safe") {
+            mstore(0x40, mCache)
         }
     }
 
@@ -185,7 +199,7 @@ contract Simulator {
         u.combinedGas += gasUsed;
 
         while (true) {
-            gasUsed = _callEntryPointMemory(ep, false, 0, abi.encode(u));
+            gasUsed = _callEntryPointMemory(ep, false, 0, u);
 
             if (gasUsed != 0) {
                 return (gasUsed, u.combinedGas);
@@ -214,7 +228,7 @@ contract Simulator {
         u.combinedGas = combinedGas;
 
         // Verification Run to generate the logs with the correct combinedGas and payment amounts.
-        gasUsed = _callEntryPointMemory(ep, true, 0, abi.encode(u));
+        gasUsed = _callEntryPointMemory(ep, true, 0, u);
 
         // If the simulation failed, bubble up full revert
         assembly ("memory-safe") {
