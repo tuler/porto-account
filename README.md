@@ -1,5 +1,9 @@
 # <h1 align="center"> Account </h1>
 
+> 🚧 **Work In Progress**
+> This repository is under active development.
+> Contracts are **unaudited**, and the codebase may have **breaking changes** without notice.
+
 **All-in-one EIP-7702 powered delegation contract, coupled with [Porto](https://github.com/ithacaxyz/porto)**
 
 Every app needs an account, traditionally requiring separate services for auth, payments, and recovery. Doing this in a way that empowers users with control over their funds and their data is the core challenge of the crypto space. While crypto wallets have made great strides, users still face a fragmented experience - juggling private keys, managing account balances across networks, 
