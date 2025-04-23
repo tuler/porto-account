@@ -256,7 +256,6 @@ contract BaseTest is SoladyTest {
         // This is meant to mimic an offchain state override.
         vm.deal(address(simulator), type(uint256).max);
 
-        vm.breakpoint("a");
         (gUsed, gCombined) = simulator.simulateV1Logs(address(ep), true, 1, 11_000, abi.encode(u));
 
         gExecute = gCombined + 20_000;

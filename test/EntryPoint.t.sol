@@ -251,7 +251,6 @@ contract EntryPointTest is BaseTest {
 
         assertEq(ep.execute{gas: gExecute}(abi.encode(u)), 0);
         assertEq(paymentToken.balanceOf(address(0xabcd)), 0.5 ether * n);
-        // TODO: Don't know what this checks
         assertEq(paymentToken.balanceOf(d.eoa), 100 ether - (u.prePaymentAmount + 0.5 ether * n));
         assertEq(ep.getNonce(d.eoa, 0), 1);
     }
@@ -831,7 +830,6 @@ contract EntryPointTest is BaseTest {
         if ((t.unapprovedEntryPoint && u.totalPaymentAmount != 0)) {
             assertEq(ep.execute(abi.encode(u)), bytes4(keccak256("Unauthorized()")));
 
-            // TODO: Add this edge case to changelog, where the nonce always gets incremented, when prePaymentAmount is 0.
             if (u.prePaymentAmount != 0) {
                 assertEq(ep.getNonce(u.eoa, 0), u.nonce);
             } else {
@@ -863,7 +861,6 @@ contract EntryPointTest is BaseTest {
             // Pre payment will not happen
             assertEq(ep.execute(abi.encode(u)), bytes4(keccak256("InvalidSignature()")));
             // If prePayment is 0, then nonce is incremented, because the prePayment doesn't fail.
-            // TODO: Is this desirable?
             if (u.prePaymentAmount == 0) {
                 assertEq(ep.getNonce(u.eoa, 0), u.nonce + 1);
             } else {

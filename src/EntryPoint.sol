@@ -317,13 +317,16 @@ contract EntryPoint is
             }
         }
 
-        // TODO: Fix later
+        // TODO: Why do we need this? This seems to be highly overestimating the gas required.
+        // Why do we need gExecute, if relay can check the success of the tx using the gas they provide?
         // unchecked {
         //     // Check if there's sufficient gas left for the gas-limited self calls
         //     // via the 63/64 rule. This is for gas estimation. If the total amount of gas
         //     // for the whole transaction is insufficient, revert.
         //     if (((gasleft() * 63) >> 6) < Math.saturatingAdd(g, _INNER_GAS_OVERHEAD)) {
-        //         if (!_isSimulationV2()) revert InsufficientGas();
+        //         if(simulationFlags != 1) {
+        //             revert InsufficientGas();
+        //         }
         //     }
         // }
 
@@ -535,7 +538,7 @@ contract EntryPoint is
         }
     }
 
-    /// @dev This function is only intended for self-call.
+    /// @dev This function is only intended for self-call. The name is mined to give a function selector of `0x00000001`
     /// We use this function to call the delegation.execute function, and then the delegation.pay function for post-payment.
     /// Self-calling this function ensures, that if the post payment reverts, then the execute function will also revert.
     function selfCallExecutePay1395256087() public payable {
@@ -750,7 +753,6 @@ contract EntryPoint is
             // Copy the userOp data to memory
             calldatacopy(add(m, 0xe0), u, encodedSize)
 
-            // TODO: If pay reverts, we now send a revert back instead of ignoring. This is a breaking change, add to changeset.
             // We revert here, so that if the post payment fails, the execution is also reverted.
             // The revert for post payment is caught inside the selfCallExecutePay function.
             // The revert for prePayment is caught inside the selfCallPayVerify function.
