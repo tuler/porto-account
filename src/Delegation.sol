@@ -751,6 +751,6 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
         returns (string memory name, string memory version)
     {
         name = "Delegation";
-        version = "0.0.3";
+        version = "0.1.0";
     }
 }
