@@ -327,15 +327,12 @@ contract EntryPoint is
         //     }
         // }
 
-        // if (u.supportedDelegationImplementation != address(0)) {
-        //     if (delegationImplementationOf(u.eoa) != u.supportedDelegationImplementation) {
-        //         if (!_isSimulationV2()) err = UnsupportedDelegationImplementation.selector;
-        //     }
-        // }
-
         if (u.supportedDelegationImplementation != address(0)) {
             if (delegationImplementationOf(u.eoa) != u.supportedDelegationImplementation) {
-                if (!isSimulation) err = UnsupportedDelegationImplementation.selector;
+                err = UnsupportedDelegationImplementation.selector;
+                if (simulationFlags == 1) {
+                    revert UnsupportedDelegationImplementation();
+                }
             }
         }
 
@@ -476,7 +473,8 @@ contract EntryPoint is
         // Off-chain simulation of `_verify` should suffice, provided that the eoa's
         // delegation is not changed, and the `keyHash` is not revoked
         // in the window between off-chain simulation and on-chain execution.
-        (bool isValid, bytes32 keyHash, bytes32 digest) = _verify(u);
+        bytes32 digest = _computeDigest(u);
+        (bool isValid, bytes32 keyHash) = _verify(digest, u.eoa, u.signature);
 
         if (simulationFlags == 1) {
             isValid = true;
@@ -609,7 +607,8 @@ contract EntryPoint is
 
             if (eoa != parentEOA) revert InvalidPreOpEOA();
 
-            (bool isValid, bytes32 keyHash,) = _verify(u);
+            (bool isValid, bytes32 keyHash) = _verify(_computeDigest(p), eoa, p.signature);
+
             if (simulationFlags == 1) {
                 isValid = true;
             }
@@ -826,8 +825,8 @@ contract EntryPoint is
         f.set(4, u.nonce);
         f.set(5, uint160(u.payer));
         f.set(6, uint160(u.paymentToken));
-        f.set(7, u.paymentMaxAmount);
-        f.set(8, u.paymentPerGas);
+        f.set(7, u.prePaymentMaxAmount);
+        f.set(8, u.totalPaymentMaxAmount);
         f.set(9, u.combinedGas);
         f.set(10, _encodedPreOpsHash(u.encodedPreOps));
 

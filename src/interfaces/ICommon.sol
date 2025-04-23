@@ -74,5 +74,31 @@ interface ICommon {
         /// @dev Optional payment signature to be passed into the `compensate` function
         /// on the `payer`. This signature is NOT included in the EIP712 signature.
         bytes paymentSignature;
+        /// @dev Optional. If non-zero, the EOA must use `supportedDelegationImplementation`.
+        /// Otherwise, if left as `address(0)`, any EOA implementation will be supported.
+        /// This field is NOT included in the EIP712 signature.
+        address supportedDelegationImplementation;
+    }
+
+    /// @dev A struct to hold the fields for a PreOp.
+    /// A PreOp is a set of Signed Executions by a user, which can only do restricted operations on the account.
+    /// Like adding and removing keys. PreOps can be appended along with any userOp, they are paid for by the userOp,
+    /// and are executed before the userOp verification happens.
+    struct PreOp {
+        /// @dev The user's address.
+        /// This can be set to `address(0)`, which allows it to be
+        /// coalesced to the parent UserOp's EOA.
+        address eoa;
+        /// @dev An encoded array of calls, using ERC7579 batch execution encoding.
+        /// `abi.encode(calls)`, where `calls` is of type `Call[]`.
+        /// This allows for more efficient safe forwarding to the EOA.
+        bytes executionData;
+        /// @dev Per delegated EOA. Same logic as the `nonce` in UserOp.
+        /// A nonce of `type(uint256).max` skips the check, incrementing,
+        /// and the emission of the {UserOpExecuted} event.
+        uint256 nonce;
+        /// @dev The wrapped signature.
+        /// `abi.encodePacked(innerSignature, keyHash, prehash)`.
+        bytes signature;
     }
 }
