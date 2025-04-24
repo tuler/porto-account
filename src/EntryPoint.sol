@@ -238,7 +238,7 @@ contract EntryPoint is
 
         if (err != 0) {
             assembly ("memory-safe") {
-                mstore(0x00, shl(224, err))
+                mstore(0x00, err)
                 revert(0x00, 0x20)
             }
         }
