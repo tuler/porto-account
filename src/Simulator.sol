@@ -186,15 +186,7 @@ contract Simulator {
         // Update payment amounts using the gasUsed value
         ICommon.UserOp memory u = abi.decode(encodedUserOp, (ICommon.UserOp));
 
-        uint256 paymentAmount = gasUsed * paymentPerGas;
-
-        if (isPrePayment) {
-            u.prePaymentAmount += paymentAmount;
-            u.prePaymentMaxAmount += paymentAmount;
-        }
-
-        u.totalPaymentAmount += paymentAmount;
-        u.totalPaymentMaxAmount += paymentAmount;
+        _updatePaymentAmounts(u, isPrePayment, gasUsed, paymentPerGas);
 
         u.combinedGas += gasUsed;
 
