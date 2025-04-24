@@ -83,6 +83,26 @@ contract SimulateExecuteTest is BaseTest {
 
         vm.expectPartialRevert(bytes4(keccak256("SimulationPassed(uint256)")));
         ep.simulateExecute(false, type(uint256).max, abi.encode(u));
+
+        uint256 snapshot = vm.snapshotState();
+        vm.deal(address(simulator), type(uint256).max);
+
+        (t.gUsed, t.gCombined) =
+            simulator.simulateV1Logs(address(ep), false, 1e9, 11_000, 0, abi.encode(u));
+
+        vm.revertToStateAndDelete(snapshot);
+        u.combinedGas = t.gCombined;
+
+        t.gExecute = t.gCombined + 10_000;
+
+        u.signature = _sig(d, u);
+
+        vm.expectRevert(bytes4(keccak256("InsufficientGas()")));
+        ep.execute{gas: t.gExecute}(abi.encode(u));
+
+        t.gExecute = Math.mulDiv(t.gCombined + 110_000, 64, 63);
+
+        assertEq(ep.execute{gas: t.gExecute}(abi.encode(u)), 0);
     }
 
     function testSimulateExecuteNoRevertUnderfundedReverts() public {
@@ -182,7 +202,8 @@ contract SimulateExecuteTest is BaseTest {
         vm.revertToStateAndDelete(snapshot);
 
         u.combinedGas = t.gCombined;
-        t.gExecute = t.gCombined + 20_000;
+        // gExecute > (100k + combinedGas) * 64/63
+        t.gExecute = Math.mulDiv(t.gCombined + 110_000, 64, 63);
 
         u.signature = _sig(d, u);
 
@@ -239,7 +260,8 @@ contract SimulateExecuteTest is BaseTest {
         vm.revertToStateAndDelete(snapshot);
 
         u.combinedGas = t.gCombined;
-        t.gExecute = t.gCombined + 20_000;
+        // gExecute > (100k + combinedGas) * 64/63
+        t.gExecute = Math.mulDiv(t.gCombined + 110_000, 64, 63);
 
         u.signature = _sig(d, u);
 
@@ -300,7 +322,7 @@ contract SimulateExecuteTest is BaseTest {
         vm.revertToStateAndDelete(snapshot);
 
         u.combinedGas = t.gCombined;
-        t.gExecute = t.gCombined + 20_000;
+        t.gExecute = Math.mulDiv(t.gCombined + 110_000, 64, 63);
 
         u.signature = _sig(k, u);
 

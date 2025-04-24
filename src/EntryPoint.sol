@@ -317,18 +317,16 @@ contract EntryPoint is
             }
         }
 
-        // TODO: Why do we need this? This seems to be highly overestimating the gas required.
-        // Why do we need gExecute, if relay can check the success of the tx using the gas they provide?
-        // unchecked {
-        //     // Check if there's sufficient gas left for the gas-limited self calls
-        //     // via the 63/64 rule. This is for gas estimation. If the total amount of gas
-        //     // for the whole transaction is insufficient, revert.
-        //     if (((gasleft() * 63) >> 6) < Math.saturatingAdd(g, _INNER_GAS_OVERHEAD)) {
-        //         if(simulationFlags != 1) {
-        //             revert InsufficientGas();
-        //         }
-        //     }
-        // }
+        unchecked {
+            // Check if there's sufficient gas left for the gas-limited self calls
+            // via the 63/64 rule. This is for gas estimation. If the total amount of gas
+            // for the whole transaction is insufficient, revert.
+            if (((gasleft() * 63) >> 6) < Math.saturatingAdd(g, _INNER_GAS_OVERHEAD)) {
+                if (simulationFlags != 1) {
+                    revert InsufficientGas();
+                }
+            }
+        }
 
         if (u.supportedDelegationImplementation != address(0)) {
             if (delegationImplementationOf(u.eoa) != u.supportedDelegationImplementation) {

@@ -29,6 +29,10 @@
     Empirically, this field can be set to `0` for `secp256k1` sigs
     And `10_000` for `P256` sigs. Relay can adjust this value, if simulations start failing for certain keytypes. 10k works with P256 sigs for 50k fuzz runs.
 
+  - Add back the INSUFFICIENT_GAS check, which prevents the relay from setting up the `execute` call on the 
+  delegation, in such a way causing it to intentionally fail.
+  For the relay, gExecute now has to be set atleast as `gExecute > (gCombined + 100_000) * 64/63)`
+
 
 
 ### Patch Changes
