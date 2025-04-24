@@ -76,7 +76,7 @@ contract SimulateExecuteTest is BaseTest {
         // If the caller does not have max balance, then the simulation should revert.
         vm.expectRevert(bytes4(keccak256("StateOverrideError()")));
         (t.gUsed, t.gCombined) =
-            simulator.simulateV1Logs(address(ep), false, 1, 11_000, abi.encode(u));
+            simulator.simulateV1Logs(address(ep), false, 1, 11_000, 10_000, abi.encode(u));
 
         vm.expectRevert(bytes4(keccak256("StateOverrideError()")));
         ep.simulateExecute(true, type(uint256).max, abi.encode(u));
@@ -130,7 +130,7 @@ contract SimulateExecuteTest is BaseTest {
         vm.prank(maxBalanceCaller);
         vm.expectRevert(bytes4(keccak256("PaymentError()")));
         (t.gUsed, t.gCombined) =
-            simulator.simulateV1Logs(address(ep), false, 1, 11_000, abi.encode(u));
+            simulator.simulateV1Logs(address(ep), false, 1, 11_000, 0, abi.encode(u));
     }
 
     function testSimulateExecuteNoRevert() public {
@@ -177,7 +177,7 @@ contract SimulateExecuteTest is BaseTest {
         vm.deal(address(simulator), type(uint256).max);
 
         (t.gUsed, t.gCombined) =
-            simulator.simulateV1Logs(address(ep), false, 1e9, 11_000, abi.encode(u));
+            simulator.simulateV1Logs(address(ep), false, 1e9, 11_000, 0, abi.encode(u));
 
         vm.revertToStateAndDelete(snapshot);
 
@@ -234,7 +234,7 @@ contract SimulateExecuteTest is BaseTest {
         vm.deal(address(simulator), type(uint256).max);
 
         (t.gUsed, t.gCombined) =
-            simulator.simulateV1Logs(address(ep), false, 1e9, 10_800, abi.encode(u));
+            simulator.simulateV1Logs(address(ep), false, 1e9, 10_800, 0, abi.encode(u));
 
         vm.revertToStateAndDelete(snapshot);
 
@@ -295,7 +295,7 @@ contract SimulateExecuteTest is BaseTest {
         vm.deal(address(simulator), type(uint256).max);
 
         (t.gUsed, t.gCombined) =
-            simulator.simulateV1Logs(address(ep), false, 1e9, 12_000, abi.encode(u));
+            simulator.simulateV1Logs(address(ep), false, 1e9, 12_000, 10_000, abi.encode(u));
 
         vm.revertToStateAndDelete(snapshot);
 

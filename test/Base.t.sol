@@ -256,7 +256,8 @@ contract BaseTest is SoladyTest {
         // This is meant to mimic an offchain state override.
         vm.deal(address(simulator), type(uint256).max);
 
-        (gUsed, gCombined) = simulator.simulateV1Logs(address(ep), true, 1, 11_000, abi.encode(u));
+        (gUsed, gCombined) =
+            simulator.simulateV1Logs(address(ep), true, 1, 11_000, 10_000, abi.encode(u));
 
         gExecute = gCombined + 20_000;
 
@@ -267,7 +268,8 @@ contract BaseTest is SoladyTest {
         EntryPoint.UserOp memory u,
         bool isPrePayment,
         uint256 paymentPerGas,
-        uint256 combinedGasIncrement
+        uint256 combinedGasIncrement,
+        uint256 combinedGasVerificationOffset
     ) internal returns (uint256 gExecute, uint256 gCombined, uint256 gUsed) {
         uint256 snapshot = vm.snapshotState();
 
@@ -276,7 +278,12 @@ contract BaseTest is SoladyTest {
         vm.deal(address(simulator), type(uint256).max);
 
         (gUsed, gCombined) = simulator.simulateV1Logs(
-            address(ep), isPrePayment, paymentPerGas, combinedGasIncrement, abi.encode(u)
+            address(ep),
+            isPrePayment,
+            paymentPerGas,
+            combinedGasIncrement,
+            combinedGasVerificationOffset,
+            abi.encode(u)
         );
 
         gExecute = gCombined + 20_000;

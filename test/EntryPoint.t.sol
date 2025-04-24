@@ -120,7 +120,7 @@ contract EntryPointTest is BaseTest {
 
         paymentToken.mint(d.eoa, 50 ether);
 
-        _simulateExecute(u, false, 1, 11_000);
+        _simulateExecute(u, false, 1, 11_000, 10_000);
         assertEq(ep.execute(abi.encode(u)), 0);
         uint256 actualAmount = 0.1 ether;
         assertEq(paymentToken.balanceOf(address(ep)), actualAmount);
@@ -178,7 +178,7 @@ contract EntryPointTest is BaseTest {
         u.combinedGas = 10000000;
         u.signature = _sig(d, u);
 
-        _simulateExecute(u, false, 1, 11_000);
+        _simulateExecute(u, false, 1, 11_000, 0);
         assertEq(ep.execute(abi.encode(u)), 0);
         uint256 actualAmount = 10 ether;
         assertEq(paymentToken.balanceOf(address(this)), actualAmount);
@@ -276,7 +276,7 @@ contract EntryPointTest is BaseTest {
 
         vm.expectRevert(bytes4(keccak256("PaymentError()")));
 
-        _simulateExecute(u, false, 1, 11_000);
+        _simulateExecute(u, false, 1, 11_000, 0);
     }
 
     struct _TestFillTemps {
@@ -452,7 +452,8 @@ contract EntryPointTest is BaseTest {
         EntryPoint.UserOp memory u,
         bool isPrePayment,
         uint256 paymentPerGas,
-        uint256 combinedGasIncrement
+        uint256 combinedGasIncrement,
+        uint256 combinedGasVerificationOffset
     ) internal returns (uint256 gUsed, uint256 gCombined) {
         uint256 snapshot = vm.snapshotState();
 
@@ -460,7 +461,12 @@ contract EntryPointTest is BaseTest {
         // This is meant to mimic an offchain state override.
         vm.deal(address(simulator), type(uint256).max);
         (gUsed, gCombined) = simulator.simulateV1Logs(
-            address(ep), isPrePayment, paymentPerGas, combinedGasIncrement, abi.encode(u)
+            address(ep),
+            isPrePayment,
+            paymentPerGas,
+            combinedGasIncrement,
+            combinedGasVerificationOffset,
+            abi.encode(u)
         );
 
         vm.revertToStateAndDelete(snapshot);

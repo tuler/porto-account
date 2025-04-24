@@ -212,17 +212,22 @@ contract Simulator {
 
     /// @dev Same as simulateCombinedGas, but with an additional verification run
     /// that generates a successful non reverting state override simulation.
-    /// Which can be used in eth_simulateV1 to get the trace.
+    /// Which can be used in eth_simulateV1 to get the trace.\
+    /// @dev combinedGasVerificationOffset is a static value that is added after a succesful combinedGas is found.
+    /// This can be used to account for variations in sig verification gas, for keytypes like P256.
     function simulateV1Logs(
         address ep,
         bool isPrePayment,
         uint256 paymentPerGas,
         uint256 combinedGasIncrement,
+        uint256 combinedGasVerificationOffset,
         bytes calldata encodedUserOp
     ) public payable virtual returns (uint256 gasUsed, uint256 combinedGas) {
         (gasUsed, combinedGas) = simulateCombinedGas(
             ep, isPrePayment, paymentPerGas, combinedGasIncrement, encodedUserOp
         );
+
+        combinedGas += combinedGasVerificationOffset;
 
         ICommon.UserOp memory u = abi.decode(encodedUserOp, (ICommon.UserOp));
 

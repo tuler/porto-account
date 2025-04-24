@@ -25,6 +25,10 @@
   Also refer to the `_estimateGas` function in `Base.t.sol` to see an example of how to estimate gas for a userOp.
   Note: the hardcoded offset values might be different for real transactions.
 
+  - Added `combinedGasVerification` offset in `simulateV1Logs` that allows the relay to account for gas variation in P256 sig verification.
+    Empirically, this field can be set to `0` for `secp256k1` sigs
+    And `10_000` for `P256` sigs. Relay can adjust this value, if simulations start failing for certain keytypes. 10k works with P256 sigs for 50k fuzz runs.
+
 
 
 ### Patch Changes
