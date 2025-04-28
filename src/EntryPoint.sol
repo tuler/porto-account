@@ -341,7 +341,7 @@ contract EntryPoint is
 
         // Early skip the entire pay-verify-call workflow if the payer lacks tokens,
         // so that less gas is wasted when the UserOp fails.
-        if (u.prePaymentAmount != 0 && err == 0) {
+        if (LibBit.and(u.prePaymentAmount != 0, err == 0)) {
             if (TokenTransferLib.balanceOf(u.paymentToken, payer) < u.prePaymentAmount) {
                 err = PaymentError.selector;
 
