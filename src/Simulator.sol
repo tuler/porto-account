@@ -4,7 +4,24 @@ pragma solidity ^0.8.23;
 import {ICommon} from "./interfaces/ICommon.sol";
 import {FixedPointMathLib as Math} from "solady/utils/FixedPointMathLib.sol";
 
+/// @title Simulator
+/// @notice A separate contract for calling the EntryPoint contract solely for gas simulation.
 contract Simulator {
+    /// @dev This modifier is used to free up memory after a function call.
+    modifier freeTempMemory() {
+        uint256 m;
+        assembly ("memory-safe") {
+            m := mload(0x40)
+        }
+        _;
+        // Restore the free memory pointer.
+        // We do this so that `abi.encode` doesn't keep expanding memory, when used in a loop
+        assembly ("memory-safe") {
+            mstore(0x40, m)
+        }
+    }
+
+    /// @dev Updates the payment amounts for the UserOp passed in.
     function _updatePaymentAmounts(
         ICommon.UserOp memory u,
         bool isPrePayment,
@@ -22,103 +39,65 @@ contract Simulator {
         u.totalPaymentMaxAmount += paymentAmount;
     }
 
+    /// @dev Performs a call to the EntryPoint, and returns the gas used by the UserOp.
+    /// This function expects that the `data` is correctly encoded.
+    function _callEntryPoint(address ep, bool isStateOverride, bytes memory data)
+        internal
+        returns (uint256 gasUsed)
+    {
+        assembly ("memory-safe") {
+            // Zeroize return slots.
+            mstore(0x00, 0)
+            mstore(0x20, 0)
+
+            let success := call(gas(), ep, 0, add(data, 0x20), mload(data), 0x00, 0x40)
+
+            switch isStateOverride
+            case 0 {
+                // If `isStateOverride` is false, the call reverts, and we check for
+                // the `SimulationPassed` selector instead of `success`.
+                // The `gasUsed` will be returned by the revert, at 0x04 in the return data.
+                if eq(shr(224, mload(0x00)), 0x4f0c028c) { gasUsed := mload(0x04) }
+            }
+            default {
+                // If the call is successful, the `gasUsed` is at 0x00 in the return data.
+                if success { gasUsed := mload(0x00) }
+            }
+        }
+    }
+
+    /// @dev Performs a call to the EntryPoint, and returns the gas used by the UserOp.
+    /// This function is for directly forwarding the UserOp in the calldata.
     function _callEntryPointCalldata(
         address ep,
         bool isStateOverride,
         uint256 combinedGasOverride,
         bytes calldata encodedUserOp
-    ) internal returns (uint256 gasUsed) {
-        assembly ("memory-safe") {
-            let m := mload(0x40)
-            mstore(m, 0x91210ad3) // function selector of `simulateExecute(bool,uint256,bytes)`
-            mstore(add(m, 0x20), isStateOverride)
-            mstore(add(m, 0x40), combinedGasOverride) // During the primary run, the combinedGasOverride is type(uint256).max
-            mstore(add(m, 0x60), 0x60) // encodedUserOp
-            mstore(add(m, 0x80), encodedUserOp.length)
-            calldatacopy(add(m, 0xa0), encodedUserOp.offset, encodedUserOp.length)
-
-            // Zeroize return slots
-            mstore(0x00, 0)
-            mstore(0x20, 0)
-
-            let success :=
-                call(gas(), ep, 0, add(m, 0x1c), add(encodedUserOp.length, 0x84), 0x00, 0x20)
-
-            // Success should only happen if isStateOverride is true
-            if isStateOverride {
-                if success {
-                    // Return gasUsed
-                    gasUsed := mload(0x00)
-                }
-            }
-            // If not state override, check for SimulationPassed selector
-            if iszero(isStateOverride) {
-                let err := shr(224, mload(0x00))
-                // Check if first 4 bytes are equal to SimulationPassed(uint256)
-                if eq(err, 0x4f0c028c) {
-                    returndatacopy(0x00, 0x04, 0x20)
-                    // Execute was successful
-                    gasUsed := mload(0x00)
-                }
-            }
-        }
+    ) internal freeTempMemory returns (uint256) {
+        bytes memory data = abi.encodeWithSignature(
+            "simulateExecute(bool,uint256,bytes)",
+            isStateOverride,
+            combinedGasOverride,
+            encodedUserOp
+        );
+        return _callEntryPoint(ep, isStateOverride, data);
     }
 
+    /// @dev Performs a call to the EntryPoint, and returns the gas used by the UserOp.
+    /// This function is for forwarding the re-encoded UserOp.
     function _callEntryPointMemory(
         address ep,
         bool isStateOverride,
         uint256 combinedGasOverride,
         ICommon.UserOp memory u
-    ) internal returns (uint256 gasUsed) {
-        uint256 mCache;
-        // Cache the free memory pointer
-        assembly ("memory-safe") {
-            mCache := mload(0x40)
-        }
-
-        bytes memory encodedUserOp = abi.encode(u);
-
-        // Set the simulation flag to true
-        assembly ("memory-safe") {
-            let m := mload(0x40)
-
-            mstore(m, 0x91210ad3) // function selector of `simulateExecute(bool,uint256,bytes)`
-            mstore(add(m, 0x20), isStateOverride)
-            mstore(add(m, 0x40), combinedGasOverride) // During the verification run, the combinedGasOverride is 0.
-            mstore(add(m, 0x60), 0x60) // encodedUserOp
-            let len := mload(encodedUserOp)
-            mcopy(add(m, 0x80), encodedUserOp, len)
-
-            // Zeroize return slots
-            mstore(0x00, 0)
-            mstore(0x20, 0)
-
-            let success := call(gas(), ep, 0, add(m, 0x1c), add(len, 0x84), 0x00, 0x20)
-
-            // Success should only happen if isStateOverride is true
-            if isStateOverride {
-                if success {
-                    // Return gasUsed
-                    gasUsed := mload(0x00)
-                }
-            }
-            // If not state override, check for SimulationPassed selector
-            if iszero(isStateOverride) {
-                let err := shr(224, mload(0x00))
-                // Check if first 4 bytes are equal to SimulationPassed(uint256)
-                if eq(err, 0x4f0c028c) {
-                    returndatacopy(0x00, 0x04, 0x20)
-                    // Execute was successful
-                    gasUsed := mload(0x00)
-                }
-            }
-        }
-
-        // Restore the free memory pointer
-        // We do this so that abi.encode doesn't keep expanding memory, when used in a loop
-        assembly ("memory-safe") {
-            mstore(0x40, mCache)
-        }
+    ) internal freeTempMemory returns (uint256) {
+        bytes memory data = abi.encodeWithSignature(
+            "simulateExecute(bool,uint256,bytes)",
+            isStateOverride,
+            combinedGasOverride,
+            abi.encode(u)
+        );
+        return _callEntryPoint(ep, isStateOverride, data);
     }
 
     /// @dev Simulate the gas usage for a user operation. This function reverts if the simulation fails.
@@ -133,10 +112,10 @@ contract Simulator {
         returns (uint256 gasUsed)
     {
         gasUsed = _callEntryPointCalldata(
-            ep, false, overrideCombinedGas ? type(uint256).max : 0, encodedUserOp
+            ep, false, Math.ternary(overrideCombinedGas, type(uint256).max, 0), encodedUserOp
         );
 
-        // If the simulation failed, bubble up full revert
+        // If the simulation failed, bubble up full revert.
         assembly ("memory-safe") {
             if iszero(gasUsed) {
                 let m := mload(0x40)
@@ -174,7 +153,7 @@ contract Simulator {
         // 1. Primary Simulation Run to get initial gasUsed value with combinedGasOverride
         gasUsed = _callEntryPointCalldata(ep, false, type(uint256).max, encodedUserOp);
 
-        // If the simulation failed, bubble up full revert
+        // If the simulation failed, bubble up the full revert.
         assembly ("memory-safe") {
             if iszero(gasUsed) {
                 let m := mload(0x40)
