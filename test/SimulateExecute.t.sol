@@ -32,6 +32,79 @@ contract SimulateExecuteTest is BaseTest {
         return _bound(_random(), 0, 10000);
     }
 
+    function testSimulateV1Logs() public {
+        DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
+        assertEq(_balanceOf(address(paymentToken), d.eoa), 0);
+
+        paymentToken.mint(d.eoa, type(uint128).max);
+
+        _SimulateExecuteTemps memory t;
+
+        gasBurner.setRandomness(1); // Warm the storage first.
+
+        t.gasToBurn = _gasToBurn();
+        do {
+            t.randomness = _randomUniform();
+        } while (t.randomness == 0);
+        emit LogUint("gasToBurn", t.gasToBurn);
+
+        t.executionData = _executionData(
+            address(gasBurner),
+            abi.encodeWithSignature("burnGas(uint256,uint256)", t.gasToBurn, t.randomness)
+        );
+
+        EntryPoint.UserOp memory u;
+        u.eoa = d.eoa;
+        u.nonce = 0;
+        u.executionData = t.executionData;
+        u.payer = address(0x00);
+        u.paymentToken = address(paymentToken);
+        u.paymentRecipient = address(0x00);
+        u.prePaymentAmount = 0x112233112233112233112233;
+        u.prePaymentMaxAmount = 0x445566445566445566445566;
+        u.totalPaymentAmount = u.prePaymentAmount;
+        u.totalPaymentMaxAmount = u.prePaymentMaxAmount;
+        u.combinedGas = 20_000;
+
+        {
+            // Just pass in a junk secp256k1 signature.
+            (uint8 v, bytes32 r, bytes32 s) =
+                vm.sign(uint128(_randomUniform()), bytes32(_randomUniform()));
+            u.signature = abi.encodePacked(r, s, v);
+        }
+
+        // If the caller does not have max balance, then the simulation should revert.
+        vm.expectRevert(bytes4(keccak256("StateOverrideError()")));
+        (t.gUsed, t.gCombined) =
+            simulator.simulateV1Logs(address(ep), false, 1, 11_000, 10_000, abi.encode(u));
+
+        vm.expectRevert(bytes4(keccak256("StateOverrideError()")));
+        ep.simulateExecute(true, type(uint256).max, abi.encode(u));
+
+        vm.expectPartialRevert(bytes4(keccak256("SimulationPassed(uint256)")));
+        ep.simulateExecute(false, type(uint256).max, abi.encode(u));
+
+        uint256 snapshot = vm.snapshotState();
+        vm.deal(address(simulator), type(uint256).max);
+
+        (t.gUsed, t.gCombined) =
+            simulator.simulateV1Logs(address(ep), false, 1e9, 11_000, 0, abi.encode(u));
+
+        vm.revertToStateAndDelete(snapshot);
+        u.combinedGas = t.gCombined;
+
+        t.gExecute = t.gCombined + 10_000;
+
+        u.signature = _sig(d, u);
+
+        vm.expectRevert(bytes4(keccak256("InsufficientGas()")));
+        ep.execute{gas: t.gExecute}(abi.encode(u));
+
+        t.gExecute = Math.mulDiv(t.gCombined + 110_000, 64, 63);
+
+        assertEq(ep.execute{gas: t.gExecute}(abi.encode(u)), 0);
+    }
+
     function testSimulateExecuteNoRevertUnderfundedReverts() public {
         DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
         assertEq(_balanceOf(address(paymentToken), d.eoa), 0);
@@ -58,9 +131,12 @@ contract SimulateExecuteTest is BaseTest {
         u.payer = address(0x00);
         u.paymentToken = address(paymentToken);
         u.paymentRecipient = address(0x00);
-        u.paymentAmount = 0x112233112233112233112233;
-        u.paymentMaxAmount = 0x445566445566445566445566;
-        u.paymentPerGas = 1;
+        u.prePaymentAmount = 0x112233112233112233112233;
+        u.prePaymentMaxAmount = 0x445566445566445566445566;
+        u.totalPaymentAmount = u.prePaymentAmount;
+        u.totalPaymentMaxAmount = u.prePaymentMaxAmount;
+        u.combinedGas = 20_000;
+        // u.paymentPerGas = 1;
 
         {
             // Just pass in a junk secp256k1 signature.
@@ -72,12 +148,9 @@ contract SimulateExecuteTest is BaseTest {
         address maxBalanceCaller = _randomUniqueHashedAddress();
         vm.deal(maxBalanceCaller, type(uint256).max);
         vm.prank(maxBalanceCaller);
-        (t.success, t.result) =
-            address(ep).call(abi.encodeWithSignature("simulateExecute(bytes)", abi.encode(u)));
-
-        assertFalse(t.success);
-
-        assertEq(t.result, abi.encodePacked(bytes4(keccak256("PaymentError()"))));
+        vm.expectRevert(bytes4(keccak256("PaymentError()")));
+        (t.gUsed, t.gCombined) =
+            simulator.simulateV1Logs(address(ep), false, 1, 11_000, 0, abi.encode(u));
     }
 
     function testSimulateExecuteNoRevert() public {
@@ -107,9 +180,11 @@ contract SimulateExecuteTest is BaseTest {
         u.payer = address(0x00);
         u.paymentToken = address(paymentToken);
         u.paymentRecipient = address(0x00);
-        u.paymentAmount = 0x112233112233112233112233;
-        u.paymentMaxAmount = 0x445566445566445566445566;
-        u.paymentPerGas = 1;
+        u.prePaymentAmount = 0x112233112233112233112233;
+        u.prePaymentMaxAmount = 0x445566445566445566445566;
+        u.totalPaymentAmount = u.prePaymentAmount;
+        u.totalPaymentMaxAmount = u.prePaymentMaxAmount;
+        u.combinedGas = 20_000;
 
         {
             // Just pass in a junk secp256k1 signature.
@@ -118,22 +193,21 @@ contract SimulateExecuteTest is BaseTest {
             u.signature = abi.encodePacked(r, s, v);
         }
 
-        address maxBalanceCaller = _randomUniqueHashedAddress();
-        vm.deal(maxBalanceCaller, type(uint256).max);
-        vm.prank(maxBalanceCaller);
-        (t.success, t.result) =
-            address(ep).call(abi.encodeWithSignature("simulateExecute(bytes)", abi.encode(u)));
+        uint256 snapshot = vm.snapshotState();
+        vm.deal(address(simulator), type(uint256).max);
 
-        assertTrue(t.success);
+        (t.gUsed, t.gCombined) =
+            simulator.simulateV1Logs(address(ep), false, 1e9, 11_000, 0, abi.encode(u));
 
-        t.gExecute = uint256(LibBytes.load(t.result, 0x00));
-        t.gCombined = uint256(LibBytes.load(t.result, 0x20));
-        t.gUsed = uint256(LibBytes.load(t.result, 0x40));
-        emit LogUint("gExecute", t.gExecute);
-        emit LogUint("gCombined", t.gCombined);
-        emit LogUint("gUsed", t.gUsed);
-        assertEq(bytes4(LibBytes.load(t.result, 0x60)), 0);
+        vm.revertToStateAndDelete(snapshot);
 
+        u.combinedGas = t.gCombined;
+        // gExecute > (100k + combinedGas) * 64/63
+        t.gExecute = Math.mulDiv(t.gCombined + 110_000, 64, 63);
+
+        u.signature = _sig(d, u);
+
+        assertEq(ep.execute{gas: t.gExecute}(abi.encode(u)), 0);
         assertEq(gasBurner.randomness(), t.randomness);
     }
 
@@ -164,9 +238,11 @@ contract SimulateExecuteTest is BaseTest {
         u.payer = address(0x00);
         u.paymentToken = address(paymentToken);
         u.paymentRecipient = address(0x00);
-        u.paymentAmount = _randomChance(2) ? 0 : 0.1 ether;
-        u.paymentMaxAmount = _bound(_random(), u.paymentAmount, 0.5 ether);
-        u.paymentPerGas = 1e9;
+        u.prePaymentAmount = _randomChance(2) ? 0 : 0.1 ether;
+        u.prePaymentMaxAmount = _bound(_random(), u.prePaymentAmount, 0.5 ether);
+        u.totalPaymentAmount = u.prePaymentAmount;
+        u.totalPaymentMaxAmount = u.prePaymentMaxAmount;
+        u.combinedGas = 20_000;
 
         {
             // Just pass in a junk secp256k1 signature.
@@ -175,21 +251,18 @@ contract SimulateExecuteTest is BaseTest {
             u.signature = abi.encodePacked(r, s, v);
         }
 
-        (t.success, t.result) =
-            address(ep).call(abi.encodeWithSignature("simulateExecute(bytes)", abi.encode(u)));
+        uint256 snapshot = vm.snapshotState();
+        vm.deal(address(simulator), type(uint256).max);
 
-        assertFalse(t.success);
-        assertEq(bytes4(LibBytes.load(t.result, 0x00)), EntryPoint.SimulationResult.selector);
+        (t.gUsed, t.gCombined) =
+            simulator.simulateV1Logs(address(ep), false, 1e9, 10_800, 0, abi.encode(u));
 
-        t.gExecute = uint256(LibBytes.load(t.result, 0x04));
-        t.gCombined = uint256(LibBytes.load(t.result, 0x24));
-        t.gUsed = uint256(LibBytes.load(t.result, 0x44));
-        emit LogUint("gExecute", t.gExecute);
-        emit LogUint("gCombined", t.gCombined);
-        emit LogUint("gUsed", t.gUsed);
-        assertEq(bytes4(LibBytes.load(t.result, 0x64)), 0);
+        vm.revertToStateAndDelete(snapshot);
 
         u.combinedGas = t.gCombined;
+        // gExecute > (100k + combinedGas) * 64/63
+        t.gExecute = Math.mulDiv(t.gCombined + 110_000, 64, 63);
+
         u.signature = _sig(d, u);
 
         assertEq(ep.execute{gas: t.gExecute}(abi.encode(u)), 0);
@@ -227,9 +300,11 @@ contract SimulateExecuteTest is BaseTest {
         u.payer = address(0x00);
         u.paymentToken = address(paymentToken);
         u.paymentRecipient = address(0x00);
-        u.paymentAmount = _randomChance(2) ? 0 : 0.1 ether;
-        u.paymentMaxAmount = _bound(_random(), u.paymentAmount, 0.5 ether);
-        u.paymentPerGas = 1e9;
+        u.prePaymentAmount = _randomChance(2) ? 0 : 0.1 ether;
+        u.prePaymentMaxAmount = _bound(_random(), u.prePaymentAmount, 0.5 ether);
+        u.totalPaymentAmount = u.prePaymentAmount;
+        u.totalPaymentMaxAmount = u.prePaymentMaxAmount;
+        u.combinedGas = 20_000;
 
         // Just fill with some non-zero junk P256 signature that contains the `keyHash`,
         // so that the `simulateExecute` knows that
@@ -238,21 +313,17 @@ contract SimulateExecuteTest is BaseTest {
         // to hit all the gas for the GuardedExecutor stuff for the `keyHash`.
         u.signature = abi.encodePacked(keccak256("a"), keccak256("b"), k.keyHash, uint8(0));
 
-        (t.success, t.result) =
-            address(ep).call(abi.encodeWithSignature("simulateExecute(bytes)", abi.encode(u)));
+        uint256 snapshot = vm.snapshotState();
+        vm.deal(address(simulator), type(uint256).max);
 
-        assertFalse(t.success);
-        assertEq(bytes4(LibBytes.load(t.result, 0x00)), EntryPoint.SimulationResult.selector);
+        (t.gUsed, t.gCombined) =
+            simulator.simulateV1Logs(address(ep), false, 1e9, 12_000, 10_000, abi.encode(u));
 
-        t.gExecute = uint256(LibBytes.load(t.result, 0x04));
-        t.gCombined = uint256(LibBytes.load(t.result, 0x24));
-        t.gUsed = uint256(LibBytes.load(t.result, 0x44));
-        emit LogUint("gExecute", t.gExecute);
-        emit LogUint("gCombined", t.gCombined);
-        emit LogUint("gUsed", t.gUsed);
-        assertEq(bytes4(LibBytes.load(t.result, 0x64)), 0);
+        vm.revertToStateAndDelete(snapshot);
 
         u.combinedGas = t.gCombined;
+        t.gExecute = Math.mulDiv(t.gCombined + 110_000, 64, 63);
+
         u.signature = _sig(k, u);
 
         assertEq(ep.execute{gas: t.gExecute}(abi.encode(u)), 0);

@@ -3,7 +3,7 @@ pragma solidity ^0.8.4;
 
 import "./utils/SoladyTest.sol";
 import "./Base.t.sol";
-import "../src/LibNonce.sol";
+import "../src/libraries/LibNonce.sol";
 
 contract LibNonceTest is BaseTest {
     mapping(uint192 => LibStorage.Ref) seqMap;

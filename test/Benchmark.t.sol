@@ -193,6 +193,22 @@ contract BenchmarkTest is BaseTest {
         _testERC20TransferViaPortoEntryPoint(new bytes(2048));
     }
 
+    function _testNativeTransferViaPortoEntryPoint(bytes memory junk) internal {
+        vm.pauseGasMetering();
+        bytes memory payload = _transferExecutionData(address(0), address(0xbabe), 1 ether);
+        vm.resumeGasMetering();
+
+        _testViaPortoEntryPoint(payload, junk);
+
+        vm.pauseGasMetering();
+        assertEq(address(0xbabe).balance, 1 ether);
+        vm.resumeGasMetering();
+    }
+
+    function testNativeTransferViaPortoEntryPoint() public {
+        _testNativeTransferViaPortoEntryPoint("");
+    }
+
     function _testERC20TransferViaPortoEntryPoint(bytes memory junk) internal {
         vm.pauseGasMetering();
         bytes memory payload =
@@ -232,9 +248,15 @@ contract BenchmarkTest is BaseTest {
         u.eoa = d.eoa;
         u.nonce = 0;
         u.combinedGas = 1000000;
-        u.paymentAmount = 0.01 ether;
-        u.paymentMaxAmount = 0.1 ether;
+        u.prePaymentAmount = 0 ether;
+        u.prePaymentMaxAmount = 0 ether;
+        u.totalPaymentAmount = 0.01 ether;
+        u.totalPaymentMaxAmount = 0.1 ether;
+        u.paymentToken = address(0);
+        u.paymentRecipient = address(1234);
         u.executionData = executionData;
+        // To maintain parity with the old benchmarks.
+        u.paymentRecipient = address(ep);
         u.signature = _sig(d, u);
 
         bytes[] memory encodedUserOps = new bytes[](1);
@@ -269,8 +291,12 @@ contract BenchmarkTest is BaseTest {
         u.eoa = d.eoa;
         u.nonce = 0;
         u.combinedGas = 1000000;
-        u.paymentAmount = 0.01 ether;
-        u.paymentMaxAmount = 0.1 ether;
+        u.prePaymentAmount = 0 ether;
+        u.prePaymentMaxAmount = 0 ether;
+        u.totalPaymentAmount = 0.01 ether;
+        u.totalPaymentMaxAmount = 0.1 ether;
+        // To maintain parity with the old benchmarks.
+        u.paymentRecipient = address(ep);
         u.executionData = _transferExecutionData(address(paymentToken), address(0xbabe), 1 ether);
         u.signature = _sig(k, u);
 

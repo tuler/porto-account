@@ -19,6 +19,9 @@ import {EntryPoint, MockEntryPoint} from "./utils/mocks/MockEntryPoint.sol";
 import {ERC20, MockPaymentToken} from "./utils/mocks/MockPaymentToken.sol";
 import {GuardedExecutor} from "../src/Delegation.sol";
 
+import {IEntryPoint} from "../src/interfaces/IEntryPoint.sol";
+import {Simulator} from "../src/Simulator.sol";
+
 contract BaseTest is SoladyTest {
     using LibRLP for LibRLP.List;
 
@@ -28,6 +31,7 @@ contract BaseTest is SoladyTest {
     MockDelegation delegation;
     EIP7702Proxy eip7702Proxy;
     TargetFunctionPayload[] targetFunctionPayloads;
+    Simulator simulator;
 
     struct TargetFunctionPayload {
         address by;
@@ -70,6 +74,8 @@ contract BaseTest is SoladyTest {
         delegationImplementation = address(new MockDelegation(address(ep)));
         eip7702Proxy = new EIP7702Proxy(delegationImplementation, address(this));
         delegation = MockDelegation(payable(eip7702Proxy));
+        simulator = new Simulator();
+
         _etchP256Verifier();
     }
 
@@ -236,6 +242,7 @@ contract BaseTest is SoladyTest {
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
     {
         u.signature = abi.encodePacked(keccak256("a"), keccak256("b"), keyHash, uint8(0));
+
         return _estimateGas(u);
     }
 
@@ -243,14 +250,47 @@ contract BaseTest is SoladyTest {
         internal
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
     {
-        bytes memory data =
-            abi.encodeWithSelector(EntryPoint.simulateExecute.selector, abi.encode(u));
-        (bool success, bytes memory result) = address(ep).call(data);
-        assertFalse(success);
+        uint256 snapshot = vm.snapshotState();
 
-        gExecute = uint256(LibBytes.load(result, 0x04));
-        gCombined = uint256(LibBytes.load(result, 0x24));
-        gUsed = uint256(LibBytes.load(result, 0x44));
+        // Set the simulator to have max balance, so that it can run in state override mode.
+        // This is meant to mimic an offchain state override.
+        vm.deal(address(simulator), type(uint256).max);
+
+        (gUsed, gCombined) =
+            simulator.simulateV1Logs(address(ep), true, 1, 11_000, 10_000, abi.encode(u));
+
+        // gExecute > (100k + combinedGas) * 64/63
+        gExecute = Math.mulDiv(gCombined + 110_000, 64, 63);
+
+        vm.revertToStateAndDelete(snapshot);
+    }
+
+    function _estimateGas(
+        EntryPoint.UserOp memory u,
+        bool isPrePayment,
+        uint256 paymentPerGas,
+        uint256 combinedGasIncrement,
+        uint256 combinedGasVerificationOffset
+    ) internal returns (uint256 gExecute, uint256 gCombined, uint256 gUsed) {
+        uint256 snapshot = vm.snapshotState();
+
+        // Set the simulator to have max balance, so that it can run in state override mode.
+        // This is meant to mimic an offchain state override.
+        vm.deal(address(simulator), type(uint256).max);
+
+        (gUsed, gCombined) = simulator.simulateV1Logs(
+            address(ep),
+            isPrePayment,
+            paymentPerGas,
+            combinedGasIncrement,
+            combinedGasVerificationOffset,
+            abi.encode(u)
+        );
+
+        // gExecute > (100k + combinedGas) * 64/63
+        gExecute = Math.mulDiv(gCombined + 110_000, 64, 63);
+
+        vm.revertToStateAndDelete(snapshot);
     }
 
     function _mint(address token, address to, uint256 amount) internal {
