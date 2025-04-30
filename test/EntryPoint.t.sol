@@ -281,12 +281,11 @@ contract EntryPointTest is BaseTest {
     }
 
     function testWithdrawTokens() public {
-        vm.startPrank(ep.owner());
+        // Anyone can withdraw tokens from the entry point.
         vm.deal(address(ep), 1 ether);
         paymentToken.mint(address(ep), 10 ether);
         ep.withdrawTokens(address(0), address(0xabcd), 1 ether);
         ep.withdrawTokens(address(paymentToken), address(0xabcd), 10 ether);
-        vm.stopPrank();
     }
 
     function testExceuteGasUsed() public {

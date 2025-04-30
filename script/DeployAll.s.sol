@@ -9,7 +9,7 @@ contract DeployAllScript is Script {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.createWallet(deployerPrivateKey).addr;
         vm.startBroadcast(deployerPrivateKey);
-        new DeployAll(deployer);
+        new DeployAll();
         vm.stopBroadcast();
     }
 }

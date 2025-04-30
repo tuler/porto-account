@@ -5,7 +5,6 @@ import {AccountRegistry} from "./AccountRegistry.sol";
 import {LibBitmap} from "solady/utils/LibBitmap.sol";
 import {LibERC7579} from "solady/accounts/LibERC7579.sol";
 import {LibEIP7702} from "solady/accounts/LibEIP7702.sol";
-import {Ownable} from "solady/auth/Ownable.sol";
 import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
 import {ReentrancyGuardTransient} from "solady/utils/ReentrancyGuardTransient.sol";
 import {EIP712} from "solady/utils/EIP712.sol";
@@ -38,13 +37,7 @@ import {IEntryPoint} from "./interfaces/IEntryPoint.sol";
 /// - Minimize chance of censorship.
 ///   This means once an UserOp is signed, it is infeasible to
 ///   alter or rearrange it to force it to fail.
-contract EntryPoint is
-    IEntryPoint,
-    EIP712,
-    Ownable,
-    CallContextChecker,
-    ReentrancyGuardTransient
-{
+contract EntryPoint is IEntryPoint, EIP712, CallContextChecker, ReentrancyGuardTransient {
     using LibERC7579 for bytes32[];
     using EfficientHashLib for bytes32[];
     using LibBitmap for LibBitmap.Bitmap;
@@ -141,16 +134,14 @@ contract EntryPoint is
     uint256 internal constant _REFUND_GAS = 50000;
 
     ////////////////////////////////////////////////////////////////////////
-    // Constructor
-    ////////////////////////////////////////////////////////////////////////
-
-    constructor(address initialOwner) payable {
-        _initializeOwner(initialOwner);
-    }
-
-    ////////////////////////////////////////////////////////////////////////
     // Main
     ////////////////////////////////////////////////////////////////////////
+
+    /// @dev Allows anyone to sweep tokens from the entry point.
+    /// If `token` is `address(0)`, withdraws the native gas token.
+    function withdrawTokens(address token, address recipient, uint256 amount) public virtual {
+        TokenTransferLib.safeTransfer(token, recipient, amount);
+    }
 
     /// @dev Executes a single encoded user operation.
     /// `encodedUserOp` is given by `abi.encode(userOp)`, where `userOp` is a struct of type `UserOp`.
@@ -789,20 +780,6 @@ contract EntryPoint is
     }
 
     receive() external payable virtual {}
-
-    ////////////////////////////////////////////////////////////////////////
-    // Only Owner Functions
-    ////////////////////////////////////////////////////////////////////////
-
-    /// @dev Allows the entry point owner to withdraw tokens.
-    /// If `token` is `address(0)`, withdraws the native gas token.
-    function withdrawTokens(address token, address recipient, uint256 amount)
-        public
-        virtual
-        onlyOwner
-    {
-        TokenTransferLib.safeTransfer(token, recipient, amount);
-    }
 
     ////////////////////////////////////////////////////////////////////////
     // EIP712
