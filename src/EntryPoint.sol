@@ -794,7 +794,7 @@ contract EntryPoint is IEntryPoint, EIP712, CallContextChecker, ReentrancyGuardT
         returns (string memory name, string memory version)
     {
         name = "EntryPoint";
-        version = "0.1.0";
+        version = "0.1.1";
     }
 
     ////////////////////////////////////////////////////////////////////////
