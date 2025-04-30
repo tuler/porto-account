@@ -445,6 +445,8 @@ contract EntryPoint is
         }
         if (!isValid) revert VerificationError();
 
+        _checkAndIncrementNonce(u.eoa, u.nonce);
+
         // PrePayment
         // If `_pay` fails, just revert.
         // Off-chain simulation of `_pay` should suffice,
@@ -519,7 +521,7 @@ contract EntryPoint is
         bytes memory data = LibERC7579.reencodeBatchAsExecuteCalldata(
             hex"01000000000078210001", // ERC7821 batch execution mode.
             u.executionData,
-            abi.encode(keyHash, u.nonce) // `opData`.
+            abi.encode(keyHash) // `opData`.
         );
 
         assembly ("memory-safe") {
@@ -552,7 +554,7 @@ contract EntryPoint is
     /// - Check and increment the nonce, if it is not `type(uint256).max`.
     /// - Call the Delegation with `executionData`, using the ERC7821 batch-execution mode.
     ///   If the call fails, revert.
-    /// - Emit an {UserOpExecuted} event, if `nonce` is not `type(uint256).max`.
+    /// - Emit an {UserOpExecuted} event.
     function _handlePreOps(
         address parentEOA,
         uint256 simulationFlags,
@@ -562,6 +564,8 @@ contract EntryPoint is
             PreOp calldata p = _extractPreOp(encodedPreOps[i]);
             address eoa = Math.coalesce(p.eoa, parentEOA);
 
+            if (eoa != parentEOA) revert InvalidPreOpEOA();
+
             (bool isValid, bytes32 keyHash) = _verify(_computeDigest(p), eoa, p.signature);
 
             if (simulationFlags == 1) {
@@ -569,11 +573,13 @@ contract EntryPoint is
             }
             if (!isValid) revert PreOpVerificationError();
 
+            _checkAndIncrementNonce(eoa, p.nonce);
+
             // This part is same as `selfCallPayVerifyCall537021665`. We simply inline to save gas.
             bytes memory data = LibERC7579.reencodeBatchAsExecuteCalldata(
                 hex"01000000000078210001", // ERC7821 batch execution mode.
                 p.executionData,
-                abi.encode(keyHash, p.nonce) // `opData`.
+                abi.encode(keyHash) // `opData`.
             );
             // This part is slightly different from `selfCallPayVerifyCall537021665`.
             // It always reverts on failure.
@@ -610,6 +616,22 @@ contract EntryPoint is
     ////////////////////////////////////////////////////////////////////////
     // Internal Helpers
     ////////////////////////////////////////////////////////////////////////
+
+    function _checkAndIncrementNonce(address eoa, uint256 nonce) internal virtual {
+        // Equivalent Solidity code:
+        // eoa.checkAndIncrementNonce(u.nonce);
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+
+            mstore(m, 0x9e49fbf1) // `checkAndIncrementNonce(uint256)`.
+            mstore(add(m, 0x20), nonce)
+
+            if iszero(call(gas(), eoa, 0, add(m, 0x1c), 0x24, 0x00, 0x00)) {
+                mstore(0x00, shl(224, 0x756688fe)) // `InvalidNonce()`.
+                revert(0x00, 0x20)
+            }
+        }
+    }
 
     /// @dev Makes the `eoa` perform a payment to the `paymentRecipient` directly.
     /// This reverts if the payment is insufficient or fails. Otherwise returns nothing.

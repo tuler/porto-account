@@ -307,6 +307,14 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
         emit NonceInvalidated(nonce);
     }
 
+    /// @dev Checks current nonce and increments the sequence for the `seqKey`.
+    function checkAndIncrementNonce(uint256 nonce) public virtual {
+        if (msg.sender != ENTRY_POINT) {
+            revert Unauthorized();
+        }
+        LibNonce.checkAndIncrement(_getDelegationStorage().nonceSeqs, nonce);
+    }
+
     /// @dev Upgrades the proxy delegation.
     /// If this delegation is delegated directly without usage of EIP7702Proxy,
     /// this operation will not affect the logic until the authority is redelegated
@@ -695,13 +703,7 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
         if (msg.sender == ENTRY_POINT) {
             // opdata
             // 0x00: keyHash
-            // 0x20: nonce
-            if (opData.length != 0x40) revert OpDataError();
-
-            // Always check and increment the nonce.
-            LibNonce.checkAndIncrement(
-                _getDelegationStorage().nonceSeqs, uint256(LibBytes.loadCalldata(opData, 0x20))
-            );
+            if (opData.length != 0x20) revert OpDataError();
 
             return _execute(calls, LibBytes.loadCalldata(opData, 0x00));
         }
