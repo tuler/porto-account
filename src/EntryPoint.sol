@@ -15,7 +15,6 @@ import {LibStorage} from "solady/utils/LibStorage.sol";
 import {CallContextChecker} from "solady/utils/CallContextChecker.sol";
 import {FixedPointMathLib as Math} from "solady/utils/FixedPointMathLib.sol";
 import {TokenTransferLib} from "./libraries/TokenTransferLib.sol";
-import {LibNonce} from "./libraries/LibNonce.sol";
 import {LibPREP} from "./libraries/LibPREP.sol";
 import {IDelegation} from "./interfaces/IDelegation.sol";
 import {IEntryPoint} from "./interfaces/IEntryPoint.sol";
@@ -97,10 +96,6 @@ contract EntryPoint is
     // Events
     ////////////////////////////////////////////////////////////////////////
 
-    /// @dev The nonce sequence of `eoa` is invalidated up to (inclusive) of `nonce`.
-    /// The new available nonce will be `nonce + 1`.
-    event NonceInvalidated(address indexed eoa, uint256 nonce);
-
     /// @dev Emitted when a UserOp (including PreOps) is executed.
     /// This event is emitted in the `execute` function.
     /// - `incremented` denotes that `nonce`'s sequence has been incremented to invalidate `nonce`,
@@ -144,35 +139,6 @@ contract EntryPoint is
     /// @dev The amount of expected gas for refunds.
     /// Should be enough for a cold zero to non-zero SSTORE + a warm SSTORE + a few SLOADs.
     uint256 internal constant _REFUND_GAS = 50000;
-
-    ////////////////////////////////////////////////////////////////////////
-    // Storage
-    ////////////////////////////////////////////////////////////////////////
-
-    /// @dev Holds the storage.
-    struct EntryPointStorage {
-        /// @dev Mapping of (`eoa`, `seqKey`) to nonce sequence.
-        /// We use a `LibStorage.Ref` instead of a uint64 for performance.
-        mapping(address => mapping(uint192 => LibStorage.Ref)) nonceSeqs;
-        /// @dev Mapping of (`eoa`, `nonce`) to the error selector.
-        /// If `uint64(nonce) < nonceSeqs[eoa][uint192(nonce >> 64)]`,
-        /// it means that the nonce has either been used or invalidated,
-        /// and a non-zero error selector denotes an error.
-        /// Otherwise, if `uint64(nonce) >= nonceSeqs[eoa][uint192(nonce >> 64)]`,
-        /// we would expect that the error selector is zero (i.e. uninitialized).
-        mapping(address => mapping(uint256 => bytes4)) errs;
-        /// @dev A bitmap to mark ERC7683 order IDs as filled, to prevent filling replays.
-        LibBitmap.Bitmap filledOrderIds;
-    }
-
-    /// @dev Returns the storage pointer.
-    function _getEntryPointStorage() internal pure returns (EntryPointStorage storage $) {
-        // Truncate to 9 bytes to reduce bytecode size.
-        uint256 s = uint72(bytes9(keccak256("PORTO_ENTRY_POINT_STORAGE")));
-        assembly ("memory-safe") {
-            $.slot := s
-        }
-    }
 
     ////////////////////////////////////////////////////////////////////////
     // Constructor
@@ -424,9 +390,6 @@ contract EntryPoint is
             simulationFlags := calldataload(0x04)
         }
         address eoa = u.eoa;
-        // Verify the nonce, early reverting to save gas.
-        (LibStorage.Ref storage seqRef, uint256 seq) =
-            LibNonce.check(_getEntryPointStorage().nonceSeqs[eoa], u.nonce);
 
         // The chicken and egg problem:
         // A off-chain simulation of a successful UserOp may not guarantee on-chain success.
@@ -488,12 +451,6 @@ contract EntryPoint is
         // provided that the token balance does not decrease in the window between
         // off-chain simulation and on-chain execution.
         if (u.prePaymentAmount != 0) _pay(u.prePaymentAmount, keyHash, digest, u);
-
-        // Once the payment has been made, the nonce must be invalidated.
-        // Otherwise, an attacker can keep replaying the UserOp to take payment and drain the user.
-        // EntryPoint UserOp nonce bookkeeping is stored on the EntryPoint itself
-        // to make implementing this nonce-invalidation pattern more performant.
-        seqRef.value = Math.rawAdd(seq, 1);
 
         // Equivalent Solidity code:
         // try this.selfCallExecutePay(simulationFlags, keyHash, u) {}
@@ -562,7 +519,7 @@ contract EntryPoint is
         bytes memory data = LibERC7579.reencodeBatchAsExecuteCalldata(
             hex"01000000000078210001", // ERC7821 batch execution mode.
             u.executionData,
-            abi.encode(keyHash) // `opData`.
+            abi.encode(keyHash, u.nonce) // `opData`.
         );
 
         assembly ("memory-safe") {
@@ -604,9 +561,6 @@ contract EntryPoint is
         for (uint256 i; i < encodedPreOps.length; ++i) {
             PreOp calldata p = _extractPreOp(encodedPreOps[i]);
             address eoa = Math.coalesce(p.eoa, parentEOA);
-            uint256 nonce = p.nonce;
-
-            if (eoa != parentEOA) revert InvalidPreOpEOA();
 
             (bool isValid, bytes32 keyHash) = _verify(_computeDigest(p), eoa, p.signature);
 
@@ -615,15 +569,11 @@ contract EntryPoint is
             }
             if (!isValid) revert PreOpVerificationError();
 
-            if (nonce != type(uint256).max) {
-                LibNonce.checkAndIncrement(_getEntryPointStorage().nonceSeqs[eoa], nonce);
-            }
-
             // This part is same as `selfCallPayVerifyCall537021665`. We simply inline to save gas.
             bytes memory data = LibERC7579.reencodeBatchAsExecuteCalldata(
                 hex"01000000000078210001", // ERC7821 batch execution mode.
                 p.executionData,
-                abi.encode(keyHash) // `opData`.
+                abi.encode(keyHash, p.nonce) // `opData`.
             );
             // This part is slightly different from `selfCallPayVerifyCall537021665`.
             // It always reverts on failure.
@@ -640,11 +590,9 @@ contract EntryPoint is
                 }
             }
 
-            if (nonce != type(uint256).max) {
-                // Event so that indexers can know that the nonce is used.
-                // Reaching here means there's no error in the PreOp.
-                emit UserOpExecuted(eoa, nonce, true, 0); // `incremented = true`, `err = 0`.
-            }
+            // Event so that indexers can know that the nonce is used.
+            // Reaching here means there's no error in the PreOp.
+            emit UserOpExecuted(eoa, p.nonce, true, 0); // `incremented = true`, `err = 0`.
         }
     }
 
@@ -657,61 +605,6 @@ contract EntryPoint is
     /// This function is provided as a public helper for easier integration.
     function delegationImplementationOf(address eoa) public view virtual returns (address result) {
         (, result) = LibEIP7702.delegationAndImplementationOf(eoa);
-    }
-
-    ////////////////////////////////////////////////////////////////////////
-    // Nonces
-    ////////////////////////////////////////////////////////////////////////
-
-    /// @dev Return current nonce with sequence key.
-    function getNonce(address eoa, uint192 seqKey) public view virtual returns (uint256) {
-        return LibNonce.get(_getEntryPointStorage().nonceSeqs[eoa], seqKey);
-    }
-
-    /// @dev Increments the sequence for the `seqKey` in nonce (i.e. upper 192 bits).
-    /// This invalidates the nonces for the `seqKey`, up to (inclusive) `uint64(nonce)`.
-    function invalidateNonce(uint256 nonce) public virtual {
-        LibNonce.invalidate(_getEntryPointStorage().nonceSeqs[msg.sender], nonce);
-        emit NonceInvalidated(msg.sender, nonce);
-    }
-
-    ////////////////////////////////////////////////////////////////////////
-    // ERC7683
-    ////////////////////////////////////////////////////////////////////////
-
-    /// @dev ERC7683 fill.
-    /// If you don't need to ensure that the `orderId` can only be used once,
-    /// pass in `bytes32(0)` for the `orderId`. The `originData` will
-    /// already include the nonce for the delegated `eoa`.
-    function fill(bytes32 orderId, bytes calldata originData, bytes calldata)
-        public
-        payable
-        virtual
-        returns (bytes4)
-    {
-        if (orderId != bytes32(0)) {
-            if (!_getEntryPointStorage().filledOrderIds.toggle(uint256(orderId))) {
-                revert OrderAlreadyFilled();
-            }
-        }
-        // Like `abi.decode(originData, (bytes, address, uint256))`, but way faster.
-        if (originData.length < 0x60) revert();
-        bytes calldata encodedUserOp = LibBytes.bytesInCalldata(originData, 0x00);
-        address fundingToken = address(uint160(uint256(LibBytes.loadCalldata(originData, 0x20))));
-        uint256 fundingAmount = uint256(LibBytes.loadCalldata(originData, 0x40));
-
-        // Like `abi.decode(encodedUserOp, (UserOp)).eoa`, but way faster.
-        bytes calldata u = LibBytes.dynamicStructInCalldata(encodedUserOp, 0x00);
-        address eoa = address(uint160(uint256(LibBytes.loadCalldata(u, 0x00))));
-
-        TokenTransferLib.safeTransferFrom(fundingToken, msg.sender, eoa, fundingAmount);
-        return execute(encodedUserOp);
-    }
-
-    /// @dev Returns true if the order ID has been filled.
-    function orderIdIsFilled(bytes32 orderId) public view virtual returns (bool) {
-        if (orderId == bytes32(0)) return false;
-        return _getEntryPointStorage().filledOrderIds.get(uint256(orderId));
     }
 
     ////////////////////////////////////////////////////////////////////////

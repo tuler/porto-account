@@ -134,7 +134,7 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
     error KeyDoesNotExist();
 
     /// @dev The `opData` is too short.
-    error OpDataTooShort();
+    error OpDataError();
 
     /// @dev The PREP `initData` is invalid.
     error InvalidPREP();
@@ -693,7 +693,16 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
     {
         // Entry point workflow.
         if (msg.sender == ENTRY_POINT) {
-            if (opData.length < 0x20) revert OpDataTooShort();
+            // opdata
+            // 0x00: keyHash
+            // 0x20: nonce
+            if (opData.length != 0x40) revert OpDataError();
+
+            // Always check and increment the nonce.
+            LibNonce.checkAndIncrement(
+                _getDelegationStorage().nonceSeqs, uint256(LibBytes.loadCalldata(opData, 0x20))
+            );
+
             return _execute(calls, LibBytes.loadCalldata(opData, 0x00));
         }
 
@@ -704,7 +713,7 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
         }
 
         // Simple workflow with `opData`.
-        if (opData.length < 0x20) revert OpDataTooShort();
+        if (opData.length < 0x20) revert OpDataError();
         uint256 nonce = uint256(LibBytes.loadCalldata(opData, 0x00));
         LibNonce.checkAndIncrement(_getDelegationStorage().nonceSeqs, nonce);
         emit NonceInvalidated(nonce);
