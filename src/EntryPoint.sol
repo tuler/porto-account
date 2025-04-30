@@ -381,6 +381,7 @@ contract EntryPoint is IEntryPoint, EIP712, CallContextChecker, ReentrancyGuardT
             simulationFlags := calldataload(0x04)
         }
         address eoa = u.eoa;
+        uint256 nonce = u.nonce;
 
         // The chicken and egg problem:
         // A off-chain simulation of a successful UserOp may not guarantee on-chain success.
@@ -436,7 +437,16 @@ contract EntryPoint is IEntryPoint, EIP712, CallContextChecker, ReentrancyGuardT
         }
         if (!isValid) revert VerificationError();
 
-        _checkAndIncrementNonce(u.eoa, u.nonce);
+        // Call eoa.checkAndIncrementNonce(u.nonce);
+        assembly ("memory-safe") {
+            mstore(0x00, 0x9e49fbf1) // `checkAndIncrementNonce(uint256)`.
+            mstore(0x20, nonce)
+
+            if iszero(call(gas(), eoa, 0, 0x1c, 0x24, 0x00, 0x00)) {
+                mstore(0x00, 0x756688fe) // `InvalidNonce()`.
+                revert(0x1c, 0x04)
+            }
+        }
 
         // PrePayment
         // If `_pay` fails, just revert.
@@ -554,6 +564,7 @@ contract EntryPoint is IEntryPoint, EIP712, CallContextChecker, ReentrancyGuardT
         for (uint256 i; i < encodedPreOps.length; ++i) {
             PreOp calldata p = _extractPreOp(encodedPreOps[i]);
             address eoa = Math.coalesce(p.eoa, parentEOA);
+            uint256 nonce = p.nonce;
 
             if (eoa != parentEOA) revert InvalidPreOpEOA();
 
@@ -564,7 +575,16 @@ contract EntryPoint is IEntryPoint, EIP712, CallContextChecker, ReentrancyGuardT
             }
             if (!isValid) revert PreOpVerificationError();
 
-            _checkAndIncrementNonce(eoa, p.nonce);
+            // Call eoa.checkAndIncrementNonce(u.nonce);
+            assembly ("memory-safe") {
+                mstore(0x00, 0x9e49fbf1) // `checkAndIncrementNonce(uint256)`.
+                mstore(0x20, nonce)
+
+                if iszero(call(gas(), eoa, 0, 0x1c, 0x24, 0x00, 0x00)) {
+                    mstore(0x00, 0x756688fe) // `InvalidNonce()`.
+                    revert(0x1c, 0x04)
+                }
+            }
 
             // This part is same as `selfCallPayVerifyCall537021665`. We simply inline to save gas.
             bytes memory data = LibERC7579.reencodeBatchAsExecuteCalldata(
@@ -607,20 +627,6 @@ contract EntryPoint is IEntryPoint, EIP712, CallContextChecker, ReentrancyGuardT
     ////////////////////////////////////////////////////////////////////////
     // Internal Helpers
     ////////////////////////////////////////////////////////////////////////
-
-    function _checkAndIncrementNonce(address eoa, uint256 nonce) internal virtual {
-        // Equivalent Solidity code:
-        // eoa.checkAndIncrementNonce(u.nonce);
-        assembly ("memory-safe") {
-            mstore(0x00, 0x9e49fbf1) // `checkAndIncrementNonce(uint256)`.
-            mstore(0x20, nonce)
-
-            if iszero(call(gas(), eoa, 0, 0x1c, 0x24, 0x00, 0x00)) {
-                mstore(0x00, 0x756688fe) // `InvalidNonce()`.
-                revert(0x1c, 0x04)
-            }
-        }
-    }
 
     /// @dev Makes the `eoa` perform a payment to the `paymentRecipient` directly.
     /// This reverts if the payment is insufficient or fails. Otherwise returns nothing.
