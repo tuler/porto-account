@@ -176,6 +176,8 @@ contract Simulator {
                 return (gasUsed, u.combinedGas);
             }
 
+            _updatePaymentAmounts(u, isPrePayment, gasUsed, paymentPerGas);
+
             // Step up the combined gas, until we see a simulation passing
             u.combinedGas += Math.mulDiv(u.combinedGas, combinedGasIncrement, 10_000);
         }
