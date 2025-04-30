@@ -308,7 +308,7 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
     }
 
     /// @dev Checks current nonce and increments the sequence for the `seqKey`.
-    function checkAndIncrementNonce(uint256 nonce) public virtual {
+    function checkAndIncrementNonce(uint256 nonce) public payable virtual {
         if (msg.sender != ENTRY_POINT) {
             revert Unauthorized();
         }

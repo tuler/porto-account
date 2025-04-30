@@ -612,14 +612,12 @@ contract EntryPoint is IEntryPoint, EIP712, CallContextChecker, ReentrancyGuardT
         // Equivalent Solidity code:
         // eoa.checkAndIncrementNonce(u.nonce);
         assembly ("memory-safe") {
-            let m := mload(0x40)
+            mstore(0x00, 0x9e49fbf1) // `checkAndIncrementNonce(uint256)`.
+            mstore(0x20, nonce)
 
-            mstore(m, 0x9e49fbf1) // `checkAndIncrementNonce(uint256)`.
-            mstore(add(m, 0x20), nonce)
-
-            if iszero(call(gas(), eoa, 0, add(m, 0x1c), 0x24, 0x00, 0x00)) {
-                mstore(0x00, shl(224, 0x756688fe)) // `InvalidNonce()`.
-                revert(0x00, 0x20)
+            if iszero(call(gas(), eoa, 0, 0x1c, 0x24, 0x00, 0x00)) {
+                mstore(0x00, 0x756688fe) // `InvalidNonce()`.
+                revert(0x1c, 0x04)
             }
         }
     }
