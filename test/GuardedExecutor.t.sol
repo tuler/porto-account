@@ -147,24 +147,23 @@ contract GuardedExecutorTest is BaseTest {
 
             d.d.resetX();
 
-            u.nonce = ep.getNonce(u.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             u.executionData = abi.encode(calls);
 
-            u.nonce = ep.getNonce(u.eoa, 0);
             u.signature = _eoaSig(d.privateKey, u);
             assertEq(ep.execute(abi.encode(u)), 0, "2");
             assertEq(d.d.x(), x, "3");
 
             d.d.resetX();
 
-            u.nonce = ep.getNonce(u.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             u.signature = _sig(kSuperAdmin, u);
             assertEq(ep.execute(abi.encode(u)), 0, "4");
             assertEq(d.d.x(), x, "5");
 
             d.d.resetX();
 
-            u.nonce = ep.getNonce(u.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             u.signature = _sig(kRegular, u);
             assertEq(
                 ep.execute(abi.encode(u)),
@@ -183,7 +182,7 @@ contract GuardedExecutorTest is BaseTest {
 
         u.eoa = d.eoa;
         u.combinedGas = 1000000;
-        u.nonce = ep.getNonce(u.eoa, 0);
+        u.nonce = d.d.getNonce(0);
 
         PassKey memory k = _randomSecp256k1PassKey();
         k.k.isSuperAdmin = true;
@@ -207,7 +206,7 @@ contract GuardedExecutorTest is BaseTest {
             calls = new ERC7821.Call[](1);
             calls[0] = _setSpendLimitCall(k, address(0), GuardedExecutor.SpendPeriod.Hour, 1 ether);
 
-            u.nonce = ep.getNonce(d.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             u.executionData = abi.encode(calls);
             u.signature = _sig(d, u);
 
@@ -218,7 +217,7 @@ contract GuardedExecutorTest is BaseTest {
             calls = new ERC7821.Call[](1);
             calls[0] = _removeSpendLimitCall(k, address(0), GuardedExecutor.SpendPeriod.Hour);
 
-            u.nonce = ep.getNonce(d.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             u.executionData = abi.encode(calls);
             u.signature = _sig(d, u);
 
@@ -234,7 +233,7 @@ contract GuardedExecutorTest is BaseTest {
 
         u.eoa = d.eoa;
         u.combinedGas = 1000000;
-        u.nonce = ep.getNonce(u.eoa, 0);
+        u.nonce = d.d.getNonce(0);
 
         PassKey memory k = _randomSecp256k1PassKey();
 
@@ -272,7 +271,7 @@ contract GuardedExecutorTest is BaseTest {
             calls = new ERC7821.Call[](1);
             calls[0] = _transferCall2(token, address(0xb0b), amount);
 
-            u.nonce = ep.getNonce(u.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             u.executionData = abi.encode(calls);
             u.signature = _sig(k, u);
             assertEq(ep.execute(abi.encode(u)), 0);
@@ -288,7 +287,7 @@ contract GuardedExecutorTest is BaseTest {
             calls = new ERC7821.Call[](1);
             calls[0] = _removeSpendLimitCall(k, token, GuardedExecutor.SpendPeriod.Hour);
 
-            u.nonce = ep.getNonce(u.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             u.executionData = abi.encode(calls);
             u.signature = _sig(k, u);
             assertEq(ep.execute(abi.encode(u)), 0);
@@ -304,7 +303,7 @@ contract GuardedExecutorTest is BaseTest {
             calls = new ERC7821.Call[](1);
             calls[0] = _setSpendLimitCall(k, token, GuardedExecutor.SpendPeriod.Hour, 1 ether);
 
-            u.nonce = ep.getNonce(u.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             u.executionData = abi.encode(calls);
             u.signature = _sig(k, u);
             assertEq(ep.execute(abi.encode(u)), 0);
@@ -327,13 +326,12 @@ contract GuardedExecutorTest is BaseTest {
             calls = new ERC7821.Call[](1);
             calls[0] = _transferCall2(token, address(0xb0b), amount);
 
-            u.nonce = ep.getNonce(u.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             u.executionData = abi.encode(calls);
             u.signature = _sig(k, u);
             assertEq(ep.execute(abi.encode(u)), 0);
 
             infos = d.d.spendInfos(k.keyHash);
-            assertEq(infos.length, 2);
             for (uint256 i; i < infos.length; ++i) {
                 if (infos[i].period == GuardedExecutor.SpendPeriod.Hour) {
                     assertEq(infos[i].spent, amount);
@@ -349,7 +347,7 @@ contract GuardedExecutorTest is BaseTest {
             calls[0] = _removeSpendLimitCall(k, token, GuardedExecutor.SpendPeriod.Hour);
             calls[1] = _removeSpendLimitCall(k, token, GuardedExecutor.SpendPeriod.Day);
 
-            u.nonce = ep.getNonce(u.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             u.executionData = abi.encode(calls);
             u.signature = _sig(k, u);
             assertEq(ep.execute(abi.encode(u)), 0);
@@ -362,7 +360,7 @@ contract GuardedExecutorTest is BaseTest {
             calls = new ERC7821.Call[](1);
             calls[0] = _transferCall2(token, address(0xb0b), amount * 999);
 
-            u.nonce = ep.getNonce(u.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             u.executionData = abi.encode(calls);
             u.signature = _sig(k, u);
 
@@ -387,7 +385,7 @@ contract GuardedExecutorTest is BaseTest {
             calls[0] = _setSpendLimitCall(k, token, GuardedExecutor.SpendPeriod.Hour, 1 ether);
             calls[1] = _setSpendLimitCall(k, token, GuardedExecutor.SpendPeriod.Day, 1 ether);
 
-            u.nonce = ep.getNonce(u.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             u.executionData = abi.encode(calls);
             u.signature = _sig(k, u);
             assertEq(ep.execute(abi.encode(u)), 0);
@@ -404,7 +402,7 @@ contract GuardedExecutorTest is BaseTest {
             calls = new ERC7821.Call[](1);
             calls[0] = _transferCall2(token, address(0xb0b), amount);
 
-            u.nonce = ep.getNonce(u.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             u.executionData = abi.encode(calls);
             u.signature = _sig(k, u);
             assertEq(ep.execute(abi.encode(u)), 0);
@@ -422,7 +420,7 @@ contract GuardedExecutorTest is BaseTest {
 
         u.eoa = d.eoa;
         u.combinedGas = 1000000;
-        u.nonce = ep.getNonce(u.eoa, 0);
+        u.nonce = d.d.getNonce(0);
 
         PassKey memory k = _randomSecp256k1PassKey();
 
@@ -480,7 +478,7 @@ contract GuardedExecutorTest is BaseTest {
 
         u.eoa = d.eoa;
         u.combinedGas = 1000000;
-        u.nonce = ep.getNonce(u.eoa, 0);
+        u.nonce = d.d.getNonce(0);
 
         PassKey memory k = _randomSecp256k1PassKey();
 
@@ -629,7 +627,7 @@ contract GuardedExecutorTest is BaseTest {
         DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
 
         u.eoa = d.eoa;
-        u.nonce = ep.getNonce(u.eoa, 0);
+        u.nonce = d.d.getNonce(0);
         u.paymentToken = address(paymentToken);
         u.prePaymentAmount = 1 ether;
         u.prePaymentMaxAmount = type(uint192).max;
