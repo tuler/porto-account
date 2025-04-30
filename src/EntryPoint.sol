@@ -542,7 +542,7 @@ contract EntryPoint is IEntryPoint, EIP712, CallContextChecker, ReentrancyGuardT
     /// - If the `eoa == address(0)`, it will be coalesced to `parentEOA`.
     /// - Check if `eoa == parentEOA`.
     /// - Validate the signature.
-    /// - Check and increment the nonce, if it is not `type(uint256).max`.
+    /// - Check and increment the nonce.
     /// - Call the Delegation with `executionData`, using the ERC7821 batch-execution mode.
     ///   If the call fails, revert.
     /// - Emit an {UserOpExecuted} event.
