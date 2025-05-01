@@ -25,10 +25,10 @@ contract Simulator {
     function _updatePaymentAmounts(
         ICommon.UserOp memory u,
         bool isPrePayment,
-        uint256 gasUsed,
+        uint256 gas,
         uint256 paymentPerGas
     ) internal pure {
-        uint256 paymentAmount = gasUsed * paymentPerGas;
+        uint256 paymentAmount = gas * paymentPerGas;
 
         if (isPrePayment) {
             u.prePaymentAmount += paymentAmount;
@@ -165,9 +165,9 @@ contract Simulator {
         // Update payment amounts using the gasUsed value
         ICommon.UserOp memory u = abi.decode(encodedUserOp, (ICommon.UserOp));
 
-        _updatePaymentAmounts(u, isPrePayment, gasUsed, paymentPerGas);
-
         u.combinedGas += gasUsed;
+
+        _updatePaymentAmounts(u, isPrePayment, u.combinedGas, paymentPerGas);
 
         while (true) {
             gasUsed = _callEntryPointMemory(ep, false, 0, u);
@@ -176,10 +176,12 @@ contract Simulator {
                 return (gasUsed, u.combinedGas);
             }
 
-            _updatePaymentAmounts(u, isPrePayment, gasUsed, paymentPerGas);
+            uint256 gasIncrement = Math.mulDiv(u.combinedGas, combinedGasIncrement, 10_000);
+
+            _updatePaymentAmounts(u, isPrePayment, gasIncrement, paymentPerGas);
 
             // Step up the combined gas, until we see a simulation passing
-            u.combinedGas += Math.mulDiv(u.combinedGas, combinedGasIncrement, 10_000);
+            u.combinedGas += gasIncrement;
         }
     }
 
