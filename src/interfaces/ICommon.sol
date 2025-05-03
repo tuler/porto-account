@@ -93,8 +93,6 @@ interface ICommon {
         /// This allows for more efficient safe forwarding to the EOA.
         bytes executionData;
         /// @dev Per delegated EOA. Same logic as the `nonce` in UserOp.
-        /// A nonce of `type(uint256).max` skips the check, incrementing,
-        /// and the emission of the {UserOpExecuted} event.
         uint256 nonce;
         /// @dev The wrapped signature.
         /// `abi.encodePacked(innerSignature, keyHash, prehash)`.

@@ -8,6 +8,7 @@ import {MockSampleDelegateCallTarget} from "./utils/mocks/MockSampleDelegateCall
 import {MockPayerWithState} from "./utils/mocks/MockPayerWithState.sol";
 import {MockPayerWithSignature} from "./utils/mocks/MockPayerWithSignature.sol";
 import {IEntryPoint} from "../src/interfaces/IEntryPoint.sol";
+import {IDelegation} from "../src/interfaces/IDelegation.sol";
 
 contract EntryPointTest is BaseTest {
     struct _TestFullFlowTemps {
@@ -37,7 +38,7 @@ contract EntryPointTest is BaseTest {
                 t.targetFunctionPayloads[i].value = _bound(_random(), 0, 2 ** 32 - 1),
                 t.targetFunctionPayloads[i].data = _truncateBytes(_randomBytes(), 0xff)
             );
-            u.nonce = ep.getNonce(u.eoa, 0);
+            u.nonce = d.d.getNonce(0);
             paymentToken.mint(u.eoa, 2 ** 128 - 1);
             u.paymentToken = address(paymentToken);
             u.prePaymentAmount = _bound(_random(), 0, 2 ** 32 - 1);
@@ -183,7 +184,7 @@ contract EntryPointTest is BaseTest {
         uint256 actualAmount = 10 ether;
         assertEq(paymentToken.balanceOf(address(this)), actualAmount);
         assertEq(paymentToken.balanceOf(d.eoa), 500 ether - actualAmount - 1 ether);
-        assertEq(ep.getNonce(d.eoa, 0), 1);
+        assertEq(d.d.getNonce(0), 1);
     }
 
     function testExecuteBatchCalls(uint256 n) public {
@@ -217,7 +218,7 @@ contract EntryPointTest is BaseTest {
 
         for (uint256 i; i < n; ++i) {
             assertEq(errs[i], 0);
-            assertEq(ep.getNonce(ds[i].eoa, 0), 1);
+            assertEq(ds[i].d.getNonce(0), 1);
         }
         assertEq(paymentToken.balanceOf(address(0xabcd)), n * 0.5 ether);
     }
@@ -252,7 +253,7 @@ contract EntryPointTest is BaseTest {
         assertEq(ep.execute{gas: gExecute}(abi.encode(u)), 0);
         assertEq(paymentToken.balanceOf(address(0xabcd)), 0.5 ether * n);
         assertEq(paymentToken.balanceOf(d.eoa), 100 ether - (u.prePaymentAmount + 0.5 ether * n));
-        assertEq(ep.getNonce(d.eoa, 0), 1);
+        assertEq(d.d.getNonce(0), 1);
     }
 
     function testExceuteRevertsIfPaymentIsInsufficient() public {
@@ -279,53 +280,12 @@ contract EntryPointTest is BaseTest {
         _simulateExecute(u, false, 1, 11_000, 0);
     }
 
-    struct _TestFillTemps {
-        EntryPoint.UserOp userOp;
-        bytes32 orderId;
-        TargetFunctionPayload targetFunctionPayload;
-        uint256 privateKey;
-        address fundingToken;
-        uint256 fundingAmount;
-        bytes originData;
-    }
-
-    function testFill(bytes32) public {
-        _TestFillTemps memory t;
-        t.orderId = bytes32(_random());
-        {
-            DelegatedEOA memory d = _randomEIP7702DelegatedEOA();
-            EntryPoint.UserOp memory u = t.userOp;
-            u.eoa = d.eoa;
-            vm.deal(u.eoa, 2 ** 128 - 1);
-            u.executionData = _thisTargetFunctionExecutionData(
-                t.targetFunctionPayload.value = _bound(_random(), 0, 2 ** 32 - 1),
-                t.targetFunctionPayload.data = _truncateBytes(_randomBytes(), 0xff)
-            );
-            u.nonce = ep.getNonce(u.eoa, 0);
-            paymentToken.mint(address(this), 2 ** 128 - 1);
-            paymentToken.approve(address(ep), 2 ** 128 - 1);
-            t.fundingToken = address(paymentToken);
-            t.fundingAmount = _bound(_random(), 0, 2 ** 32 - 1);
-            u.paymentToken = address(paymentToken);
-            u.prePaymentAmount = t.fundingAmount;
-            u.prePaymentMaxAmount = u.prePaymentAmount;
-            u.totalPaymentAmount = u.prePaymentAmount;
-            u.totalPaymentMaxAmount = u.prePaymentMaxAmount;
-            u.combinedGas = 10000000;
-            u.signature = _sig(d, u);
-            t.originData = abi.encode(abi.encode(u), t.fundingToken, t.fundingAmount);
-        }
-        assertEq(ep.fill(t.orderId, t.originData, ""), 0);
-        assertEq(ep.orderIdIsFilled(t.orderId), t.orderId != bytes32(0x00));
-    }
-
     function testWithdrawTokens() public {
-        vm.startPrank(ep.owner());
+        // Anyone can withdraw tokens from the entry point.
         vm.deal(address(ep), 1 ether);
         paymentToken.mint(address(ep), 10 ether);
         ep.withdrawTokens(address(0), address(0xabcd), 1 ether);
         ep.withdrawTokens(address(paymentToken), address(0xabcd), 10 ether);
-        vm.stopPrank();
     }
 
     function testExceuteGasUsed() public {
@@ -404,26 +364,24 @@ contract EntryPointTest is BaseTest {
 
         vm.startPrank(u.eoa);
         if (seq == type(uint64).max) {
-            ep.invalidateNonce(nonce);
-            assertEq(ep.getNonce(u.eoa, seqKey), nonce);
+            d.d.invalidateNonce(nonce);
+            assertEq(d.d.getNonce(seqKey), nonce);
             return;
         }
 
-        ep.invalidateNonce(nonce);
-        assertEq(ep.getNonce(u.eoa, seqKey), nonce + 1);
+        d.d.invalidateNonce(nonce);
+        assertEq(d.d.getNonce(seqKey), nonce + 1);
 
         if (_randomChance(2)) {
             uint256 nonce2 = (uint256(seqKey) << 64) | uint256(seq2);
-            if (seq2 < uint64(ep.getNonce(u.eoa, seqKey))) {
+            if (seq2 < uint64(d.d.getNonce(seqKey))) {
                 vm.expectRevert(bytes4(keccak256("NewSequenceMustBeLarger()")));
-                ep.invalidateNonce(nonce2);
+                d.d.invalidateNonce(nonce2);
             } else {
-                ep.invalidateNonce(nonce2);
-                assertEq(
-                    uint64(ep.getNonce(u.eoa, seqKey)), Math.min(uint256(seq2) + 1, 2 ** 64 - 1)
-                );
+                d.d.invalidateNonce(nonce2);
+                assertEq(uint64(d.d.getNonce(seqKey)), Math.min(uint256(seq2) + 1, 2 ** 64 - 1));
             }
-            if (uint64(ep.getNonce(u.eoa, seqKey)) == type(uint64).max) return;
+            if (uint64(d.d.getNonce(seqKey)) == type(uint64).max) return;
             seq = seq2;
         }
 
@@ -431,7 +389,7 @@ contract EntryPointTest is BaseTest {
         u.executionData = _thisTargetFunctionExecutionData(
             _bound(_random(), 0, 2 ** 32 - 1), _truncateBytes(_randomBytes(), 0xff)
         );
-        u.nonce = ep.getNonce(u.eoa, seqKey);
+        u.nonce = d.d.getNonce(seqKey);
         paymentToken.mint(u.eoa, 2 ** 128 - 1);
         u.paymentToken = address(paymentToken);
         u.prePaymentAmount = _bound(_random(), 0, 2 ** 32 - 1);
@@ -750,8 +708,8 @@ contract EntryPointTest is BaseTest {
         }
 
         assertEq(paymentToken.balanceOf(address(0xabcd)), 0.5 ether);
-        t.retrievedSessionNonce = ep.getNonce(t.eoa, t.sessionNonceSeqKey);
-        t.retrievedSuperAdminNonce = ep.getNonce(t.eoa, t.superAdminNonceSeqKey);
+        t.retrievedSessionNonce = IDelegation(t.eoa).getNonce(t.sessionNonceSeqKey);
+        t.retrievedSuperAdminNonce = IDelegation(t.eoa).getNonce(t.superAdminNonceSeqKey);
         if (t.testSkipNonce) {
             assertEq(t.retrievedSessionNonce, uint256(t.sessionNonceSeqKey) << 64);
             assertEq(t.retrievedSuperAdminNonce, uint256(t.superAdminNonceSeqKey) << 64);
@@ -797,7 +755,7 @@ contract EntryPointTest is BaseTest {
         vm.deal(t.d.eoa, type(uint192).max);
 
         u.eoa = t.d.eoa;
-        u.nonce = ep.getNonce(u.eoa, 0);
+        u.nonce = t.d.d.getNonce(0);
         u.combinedGas = 1000000;
         u.payer = t.isWithState ? address(t.withState) : address(t.withSignature);
         u.paymentToken = t.token;
@@ -837,9 +795,9 @@ contract EntryPointTest is BaseTest {
             assertEq(ep.execute(abi.encode(u)), bytes4(keccak256("Unauthorized()")));
 
             if (u.prePaymentAmount != 0) {
-                assertEq(ep.getNonce(u.eoa, 0), u.nonce);
+                assertEq(t.d.d.getNonce(0), u.nonce);
             } else {
-                assertEq(ep.getNonce(u.eoa, 0), u.nonce + 1);
+                assertEq(t.d.d.getNonce(0), u.nonce + 1);
             }
 
             assertEq(_balanceOf(t.token, u.payer), t.balanceBefore);
@@ -853,12 +811,12 @@ contract EntryPointTest is BaseTest {
 
             if (u.prePaymentAmount > t.funds) {
                 // Pre payment will not happen
-                assertEq(ep.getNonce(u.eoa, 0), u.nonce);
+                assertEq(t.d.d.getNonce(0), u.nonce);
                 assertEq(_balanceOf(t.token, u.payer), t.balanceBefore);
                 assertEq(_balanceOf(address(0), address(0xabcd)), 0);
             } else {
                 // Pre payment will happen, post payment will fail
-                assertEq(ep.getNonce(u.eoa, 0), u.nonce + 1);
+                assertEq(t.d.d.getNonce(0), u.nonce + 1);
                 assertEq(_balanceOf(t.token, u.payer), t.balanceBefore - u.prePaymentAmount);
                 // Execution should have failed
                 assertEq(_balanceOf(address(0), address(0xabcd)), 0);
@@ -868,15 +826,15 @@ contract EntryPointTest is BaseTest {
             assertEq(ep.execute(abi.encode(u)), bytes4(keccak256("InvalidSignature()")));
             // If prePayment is 0, then nonce is incremented, because the prePayment doesn't fail.
             if (u.prePaymentAmount == 0) {
-                assertEq(ep.getNonce(u.eoa, 0), u.nonce + 1);
+                assertEq(t.d.d.getNonce(0), u.nonce + 1);
             } else {
-                assertEq(ep.getNonce(u.eoa, 0), u.nonce);
+                assertEq(t.d.d.getNonce(0), u.nonce);
             }
             assertEq(_balanceOf(t.token, u.payer), t.balanceBefore);
             assertEq(_balanceOf(address(0), address(0xabcd)), 0);
         } else {
             assertEq(ep.execute(abi.encode(u)), 0);
-            assertEq(ep.getNonce(u.eoa, 0), u.nonce + 1);
+            assertEq(t.d.d.getNonce(0), u.nonce + 1);
             assertEq(_balanceOf(t.token, u.payer), t.balanceBefore - u.totalPaymentAmount);
             assertEq(_balanceOf(address(0), address(0xabcd)), 1 ether);
         }
@@ -898,7 +856,7 @@ contract EntryPointTest is BaseTest {
         vm.deal(t.d.eoa, type(uint192).max);
 
         u.eoa = t.d.eoa;
-        u.nonce = ep.getNonce(u.eoa, 0);
+        u.nonce = t.d.d.getNonce(0);
         u.combinedGas = 1000000;
         u.executionData = _transferExecutionData(address(0), address(0xabcd), 1 ether);
         u.signature = _eoaSig(t.d.privateKey, u);
@@ -917,11 +875,11 @@ contract EntryPointTest is BaseTest {
                 ep.execute(abi.encode(u)),
                 bytes4(keccak256("UnsupportedDelegationImplementation()"))
             );
-            assertEq(ep.getNonce(u.eoa, 0), u.nonce);
+            assertEq(t.d.d.getNonce(0), u.nonce);
             assertEq(_balanceOf(address(0), address(0xabcd)), 0);
         } else {
             assertEq(ep.execute(abi.encode(u)), 0);
-            assertEq(ep.getNonce(u.eoa, 0), u.nonce + 1);
+            assertEq(t.d.d.getNonce(0), u.nonce + 1);
             assertEq(_balanceOf(address(0), address(0xabcd)), 1 ether);
         }
     }

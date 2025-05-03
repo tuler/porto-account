@@ -134,7 +134,7 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
     error KeyDoesNotExist();
 
     /// @dev The `opData` is too short.
-    error OpDataTooShort();
+    error OpDataError();
 
     /// @dev The PREP `initData` is invalid.
     error InvalidPREP();
@@ -305,6 +305,14 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
     function invalidateNonce(uint256 nonce) public virtual onlyThis {
         LibNonce.invalidate(_getDelegationStorage().nonceSeqs, nonce);
         emit NonceInvalidated(nonce);
+    }
+
+    /// @dev Checks current nonce and increments the sequence for the `seqKey`.
+    function checkAndIncrementNonce(uint256 nonce) public payable virtual {
+        if (msg.sender != ENTRY_POINT) {
+            revert Unauthorized();
+        }
+        LibNonce.checkAndIncrement(_getDelegationStorage().nonceSeqs, nonce);
     }
 
     /// @dev Upgrades the proxy delegation.
@@ -693,7 +701,10 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
     {
         // Entry point workflow.
         if (msg.sender == ENTRY_POINT) {
-            if (opData.length < 0x20) revert OpDataTooShort();
+            // opdata
+            // 0x00: keyHash
+            if (opData.length != 0x20) revert OpDataError();
+
             return _execute(calls, LibBytes.loadCalldata(opData, 0x00));
         }
 
@@ -704,7 +715,7 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
         }
 
         // Simple workflow with `opData`.
-        if (opData.length < 0x20) revert OpDataTooShort();
+        if (opData.length < 0x20) revert OpDataError();
         uint256 nonce = uint256(LibBytes.loadCalldata(opData, 0x00));
         LibNonce.checkAndIncrement(_getDelegationStorage().nonceSeqs, nonce);
         emit NonceInvalidated(nonce);
@@ -751,6 +762,6 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
         returns (string memory name, string memory version)
     {
         name = "Delegation";
-        version = "0.1.0";
+        version = "0.1.1";
     }
 }

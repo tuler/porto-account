@@ -7,10 +7,9 @@ import "../src/DeployAll.sol";
 
 contract LibPREPTest is SoladyTest {
     function testDeployAll() public {
-        DeployAll deployAll = new DeployAll(address(this));
+        DeployAll deployAll = new DeployAll();
 
         address entryPoint = deployAll.entryPoint();
-        assertEq(EntryPoint(payable(entryPoint)).owner(), address(this));
 
         assertEq(
             Delegation(payable(deployAll.delegationImplementation())).ENTRY_POINT(), entryPoint

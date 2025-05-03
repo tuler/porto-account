@@ -5,7 +5,6 @@ import {AccountRegistry} from "./AccountRegistry.sol";
 import {LibBitmap} from "solady/utils/LibBitmap.sol";
 import {LibERC7579} from "solady/accounts/LibERC7579.sol";
 import {LibEIP7702} from "solady/accounts/LibEIP7702.sol";
-import {Ownable} from "solady/auth/Ownable.sol";
 import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
 import {ReentrancyGuardTransient} from "solady/utils/ReentrancyGuardTransient.sol";
 import {EIP712} from "solady/utils/EIP712.sol";
@@ -15,7 +14,6 @@ import {LibStorage} from "solady/utils/LibStorage.sol";
 import {CallContextChecker} from "solady/utils/CallContextChecker.sol";
 import {FixedPointMathLib as Math} from "solady/utils/FixedPointMathLib.sol";
 import {TokenTransferLib} from "./libraries/TokenTransferLib.sol";
-import {LibNonce} from "./libraries/LibNonce.sol";
 import {LibPREP} from "./libraries/LibPREP.sol";
 import {IDelegation} from "./interfaces/IDelegation.sol";
 import {IEntryPoint} from "./interfaces/IEntryPoint.sol";
@@ -39,13 +37,7 @@ import {IEntryPoint} from "./interfaces/IEntryPoint.sol";
 /// - Minimize chance of censorship.
 ///   This means once an UserOp is signed, it is infeasible to
 ///   alter or rearrange it to force it to fail.
-contract EntryPoint is
-    IEntryPoint,
-    EIP712,
-    Ownable,
-    CallContextChecker,
-    ReentrancyGuardTransient
-{
+contract EntryPoint is IEntryPoint, EIP712, CallContextChecker, ReentrancyGuardTransient {
     using LibERC7579 for bytes32[];
     using EfficientHashLib for bytes32[];
     using LibBitmap for LibBitmap.Bitmap;
@@ -97,10 +89,6 @@ contract EntryPoint is
     // Events
     ////////////////////////////////////////////////////////////////////////
 
-    /// @dev The nonce sequence of `eoa` is invalidated up to (inclusive) of `nonce`.
-    /// The new available nonce will be `nonce + 1`.
-    event NonceInvalidated(address indexed eoa, uint256 nonce);
-
     /// @dev Emitted when a UserOp (including PreOps) is executed.
     /// This event is emitted in the `execute` function.
     /// - `incremented` denotes that `nonce`'s sequence has been incremented to invalidate `nonce`,
@@ -146,45 +134,14 @@ contract EntryPoint is
     uint256 internal constant _REFUND_GAS = 50000;
 
     ////////////////////////////////////////////////////////////////////////
-    // Storage
-    ////////////////////////////////////////////////////////////////////////
-
-    /// @dev Holds the storage.
-    struct EntryPointStorage {
-        /// @dev Mapping of (`eoa`, `seqKey`) to nonce sequence.
-        /// We use a `LibStorage.Ref` instead of a uint64 for performance.
-        mapping(address => mapping(uint192 => LibStorage.Ref)) nonceSeqs;
-        /// @dev Mapping of (`eoa`, `nonce`) to the error selector.
-        /// If `uint64(nonce) < nonceSeqs[eoa][uint192(nonce >> 64)]`,
-        /// it means that the nonce has either been used or invalidated,
-        /// and a non-zero error selector denotes an error.
-        /// Otherwise, if `uint64(nonce) >= nonceSeqs[eoa][uint192(nonce >> 64)]`,
-        /// we would expect that the error selector is zero (i.e. uninitialized).
-        mapping(address => mapping(uint256 => bytes4)) errs;
-        /// @dev A bitmap to mark ERC7683 order IDs as filled, to prevent filling replays.
-        LibBitmap.Bitmap filledOrderIds;
-    }
-
-    /// @dev Returns the storage pointer.
-    function _getEntryPointStorage() internal pure returns (EntryPointStorage storage $) {
-        // Truncate to 9 bytes to reduce bytecode size.
-        uint256 s = uint72(bytes9(keccak256("PORTO_ENTRY_POINT_STORAGE")));
-        assembly ("memory-safe") {
-            $.slot := s
-        }
-    }
-
-    ////////////////////////////////////////////////////////////////////////
-    // Constructor
-    ////////////////////////////////////////////////////////////////////////
-
-    constructor(address initialOwner) payable {
-        _initializeOwner(initialOwner);
-    }
-
-    ////////////////////////////////////////////////////////////////////////
     // Main
     ////////////////////////////////////////////////////////////////////////
+
+    /// @dev Allows anyone to sweep tokens from the entry point.
+    /// If `token` is `address(0)`, withdraws the native gas token.
+    function withdrawTokens(address token, address recipient, uint256 amount) public virtual {
+        TokenTransferLib.safeTransfer(token, recipient, amount);
+    }
 
     /// @dev Executes a single encoded user operation.
     /// `encodedUserOp` is given by `abi.encode(userOp)`, where `userOp` is a struct of type `UserOp`.
@@ -424,9 +381,7 @@ contract EntryPoint is
             simulationFlags := calldataload(0x04)
         }
         address eoa = u.eoa;
-        // Verify the nonce, early reverting to save gas.
-        (LibStorage.Ref storage seqRef, uint256 seq) =
-            LibNonce.check(_getEntryPointStorage().nonceSeqs[eoa], u.nonce);
+        uint256 nonce = u.nonce;
 
         // The chicken and egg problem:
         // A off-chain simulation of a successful UserOp may not guarantee on-chain success.
@@ -482,18 +437,23 @@ contract EntryPoint is
         }
         if (!isValid) revert VerificationError();
 
+        // Call eoa.checkAndIncrementNonce(u.nonce);
+        assembly ("memory-safe") {
+            mstore(0x00, 0x9e49fbf1) // `checkAndIncrementNonce(uint256)`.
+            mstore(0x20, nonce)
+
+            if iszero(call(gas(), eoa, 0, 0x1c, 0x24, 0x00, 0x00)) {
+                mstore(0x00, 0x756688fe) // `InvalidNonce()`.
+                revert(0x1c, 0x04)
+            }
+        }
+
         // PrePayment
         // If `_pay` fails, just revert.
         // Off-chain simulation of `_pay` should suffice,
         // provided that the token balance does not decrease in the window between
         // off-chain simulation and on-chain execution.
         if (u.prePaymentAmount != 0) _pay(u.prePaymentAmount, keyHash, digest, u);
-
-        // Once the payment has been made, the nonce must be invalidated.
-        // Otherwise, an attacker can keep replaying the UserOp to take payment and drain the user.
-        // EntryPoint UserOp nonce bookkeeping is stored on the EntryPoint itself
-        // to make implementing this nonce-invalidation pattern more performant.
-        seqRef.value = Math.rawAdd(seq, 1);
 
         // Equivalent Solidity code:
         // try this.selfCallExecutePay(simulationFlags, keyHash, u) {}
@@ -592,10 +552,10 @@ contract EntryPoint is
     /// - If the `eoa == address(0)`, it will be coalesced to `parentEOA`.
     /// - Check if `eoa == parentEOA`.
     /// - Validate the signature.
-    /// - Check and increment the nonce, if it is not `type(uint256).max`.
+    /// - Check and increment the nonce.
     /// - Call the Delegation with `executionData`, using the ERC7821 batch-execution mode.
     ///   If the call fails, revert.
-    /// - Emit an {UserOpExecuted} event, if `nonce` is not `type(uint256).max`.
+    /// - Emit an {UserOpExecuted} event.
     function _handlePreOps(
         address parentEOA,
         uint256 simulationFlags,
@@ -615,8 +575,15 @@ contract EntryPoint is
             }
             if (!isValid) revert PreOpVerificationError();
 
-            if (nonce != type(uint256).max) {
-                LibNonce.checkAndIncrement(_getEntryPointStorage().nonceSeqs[eoa], nonce);
+            // Call eoa.checkAndIncrementNonce(u.nonce);
+            assembly ("memory-safe") {
+                mstore(0x00, 0x9e49fbf1) // `checkAndIncrementNonce(uint256)`.
+                mstore(0x20, nonce)
+
+                if iszero(call(gas(), eoa, 0, 0x1c, 0x24, 0x00, 0x00)) {
+                    mstore(0x00, 0x756688fe) // `InvalidNonce()`.
+                    revert(0x1c, 0x04)
+                }
             }
 
             // This part is same as `selfCallPayVerifyCall537021665`. We simply inline to save gas.
@@ -640,11 +607,9 @@ contract EntryPoint is
                 }
             }
 
-            if (nonce != type(uint256).max) {
-                // Event so that indexers can know that the nonce is used.
-                // Reaching here means there's no error in the PreOp.
-                emit UserOpExecuted(eoa, nonce, true, 0); // `incremented = true`, `err = 0`.
-            }
+            // Event so that indexers can know that the nonce is used.
+            // Reaching here means there's no error in the PreOp.
+            emit UserOpExecuted(eoa, p.nonce, true, 0); // `incremented = true`, `err = 0`.
         }
     }
 
@@ -657,61 +622,6 @@ contract EntryPoint is
     /// This function is provided as a public helper for easier integration.
     function delegationImplementationOf(address eoa) public view virtual returns (address result) {
         (, result) = LibEIP7702.delegationAndImplementationOf(eoa);
-    }
-
-    ////////////////////////////////////////////////////////////////////////
-    // Nonces
-    ////////////////////////////////////////////////////////////////////////
-
-    /// @dev Return current nonce with sequence key.
-    function getNonce(address eoa, uint192 seqKey) public view virtual returns (uint256) {
-        return LibNonce.get(_getEntryPointStorage().nonceSeqs[eoa], seqKey);
-    }
-
-    /// @dev Increments the sequence for the `seqKey` in nonce (i.e. upper 192 bits).
-    /// This invalidates the nonces for the `seqKey`, up to (inclusive) `uint64(nonce)`.
-    function invalidateNonce(uint256 nonce) public virtual {
-        LibNonce.invalidate(_getEntryPointStorage().nonceSeqs[msg.sender], nonce);
-        emit NonceInvalidated(msg.sender, nonce);
-    }
-
-    ////////////////////////////////////////////////////////////////////////
-    // ERC7683
-    ////////////////////////////////////////////////////////////////////////
-
-    /// @dev ERC7683 fill.
-    /// If you don't need to ensure that the `orderId` can only be used once,
-    /// pass in `bytes32(0)` for the `orderId`. The `originData` will
-    /// already include the nonce for the delegated `eoa`.
-    function fill(bytes32 orderId, bytes calldata originData, bytes calldata)
-        public
-        payable
-        virtual
-        returns (bytes4)
-    {
-        if (orderId != bytes32(0)) {
-            if (!_getEntryPointStorage().filledOrderIds.toggle(uint256(orderId))) {
-                revert OrderAlreadyFilled();
-            }
-        }
-        // Like `abi.decode(originData, (bytes, address, uint256))`, but way faster.
-        if (originData.length < 0x60) revert();
-        bytes calldata encodedUserOp = LibBytes.bytesInCalldata(originData, 0x00);
-        address fundingToken = address(uint160(uint256(LibBytes.loadCalldata(originData, 0x20))));
-        uint256 fundingAmount = uint256(LibBytes.loadCalldata(originData, 0x40));
-
-        // Like `abi.decode(encodedUserOp, (UserOp)).eoa`, but way faster.
-        bytes calldata u = LibBytes.dynamicStructInCalldata(encodedUserOp, 0x00);
-        address eoa = address(uint160(uint256(LibBytes.loadCalldata(u, 0x00))));
-
-        TokenTransferLib.safeTransferFrom(fundingToken, msg.sender, eoa, fundingAmount);
-        return execute(encodedUserOp);
-    }
-
-    /// @dev Returns true if the order ID has been filled.
-    function orderIdIsFilled(bytes32 orderId) public view virtual returns (bool) {
-        if (orderId == bytes32(0)) return false;
-        return _getEntryPointStorage().filledOrderIds.get(uint256(orderId));
     }
 
     ////////////////////////////////////////////////////////////////////////
@@ -876,20 +786,6 @@ contract EntryPoint is
     receive() external payable virtual {}
 
     ////////////////////////////////////////////////////////////////////////
-    // Only Owner Functions
-    ////////////////////////////////////////////////////////////////////////
-
-    /// @dev Allows the entry point owner to withdraw tokens.
-    /// If `token` is `address(0)`, withdraws the native gas token.
-    function withdrawTokens(address token, address recipient, uint256 amount)
-        public
-        virtual
-        onlyOwner
-    {
-        TokenTransferLib.safeTransfer(token, recipient, amount);
-    }
-
-    ////////////////////////////////////////////////////////////////////////
     // EIP712
     ////////////////////////////////////////////////////////////////////////
 
@@ -902,7 +798,7 @@ contract EntryPoint is
         returns (string memory name, string memory version)
     {
         name = "EntryPoint";
-        version = "0.1.0";
+        version = "0.1.1";
     }
 
     ////////////////////////////////////////////////////////////////////////

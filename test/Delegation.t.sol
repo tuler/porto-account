@@ -306,7 +306,7 @@ contract DelegationTest is BaseTest {
     }
 
     function testAddDisallowedSuperAdminKeyTypeReverts() public {
-        address entryPoint = address(new EntryPoint(address(this)));
+        address entryPoint = address(new EntryPoint());
         address delegationImplementation = address(new Delegation(address(entryPoint)));
         address delegationProxy = address(new EIP7702Proxy(delegationImplementation, address(0)));
         delegation = MockDelegation(payable(delegationProxy));

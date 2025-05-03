@@ -1,5 +1,18 @@
 # porto-account
 
+## 0.1.1
+
+### Patch Changes
+
+- All nonce related functions removed from EP.
+- Entrypoint is not ownable anymore, anyone can call the `withdrawTokens` function.
+- All fill related functions removed from EP.
+- EP is now completely stateless, also does not have a constructor.
+- PreOp with `nonce = type(uint256).max` is not replayable anymore.
+- `OpDataTooShort` error, udpated to `OpDataError`, to enforce tighter validation of opdata.
+- `checkAndIncrementNonce` function added to delegation. Can only be called by EP.
+- 6b3294a: Optimize `_isSuperAdmin`
+
 ## 0.1.0
 
 ### Minor Changes
@@ -20,20 +33,18 @@
   - Payment recipient field in the userOp is not substituted with address(entrypoint) anymore, if the field is set to address(0).
 
   - A new `Simulator` contract is deployed, which can be customized to the needs of the relay.
-  The only change required by the relay is to start calling `simulator.simulateV1Logs` , instead of calling the entrypoint directly.
-  More information about how to use the new simulate functions have been provided in the natspec of the Simulator contract.
-  Also refer to the `_estimateGas` function in `Base.t.sol` to see an example of how to estimate gas for a userOp.
-  Note: the hardcoded offset values might be different for real transactions.
+    The only change required by the relay is to start calling `simulator.simulateV1Logs` , instead of calling the entrypoint directly.
+    More information about how to use the new simulate functions have been provided in the natspec of the Simulator contract.
+    Also refer to the `_estimateGas` function in `Base.t.sol` to see an example of how to estimate gas for a userOp.
+    Note: the hardcoded offset values might be different for real transactions.
 
   - Added `combinedGasVerification` offset in `simulateV1Logs` that allows the relay to account for gas variation in P256 sig verification.
     Empirically, this field can be set to `0` for `secp256k1` sigs
     And `10_000` for `P256` sigs. Relay can adjust this value, if simulations start failing for certain keytypes. 10k works with P256 sigs for 50k fuzz runs.
 
-  - Add back the INSUFFICIENT_GAS check, which prevents the relay from setting up the `execute` call on the 
-  delegation, in such a way causing it to intentionally fail.
-  For the relay, gExecute now has to be set atleast as `gExecute > (gCombined + 100_000) * 64/63)`
-
-
+  - Add back the INSUFFICIENT_GAS check, which prevents the relay from setting up the `execute` call on the
+    delegation, in such a way causing it to intentionally fail.
+    For the relay, gExecute now has to be set atleast as `gExecute > (gCombined + 100_000) * 64/63)`
 
 ### Patch Changes
 
