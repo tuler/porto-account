@@ -528,8 +528,29 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
             if or(shr(64, t), lt(encodedUserOp.length, 0x20)) { revert(0x00, 0x00) }
         }
 
-        if (!LibBit.and(msg.sender == ENTRY_POINT, userOp.eoa == address(this))) {
+        if (
+            !LibBit.and(
+                msg.sender == ENTRY_POINT,
+                LibBit.or(userOp.eoa == address(this), userOp.payer == address(this))
+            )
+        ) {
             revert Unauthorized();
+        }
+
+        // If this delegation is the paymaster, validate the paymaster signature.
+        if (userOp.payer == address(this)) {
+            (bool isValid,) = unwrapAndValidateSignature(userOpDigest, userOp.paymentSignature);
+
+            // If this is a simulation, signature validation errors are skipped.
+            /// @dev to simulate a paymaster, state override the balance of the msg.sender
+            /// to type(uint256).max. In this case, the msg.sender is the ENTRY_POINT.
+            if (address(ENTRY_POINT).balance == type(uint256).max) {
+                isValid = true;
+            }
+
+            if (!isValid) {
+                revert Unauthorized();
+            }
         }
 
         TokenTransferLib.safeTransfer(userOp.paymentToken, userOp.paymentRecipient, paymentAmount);
