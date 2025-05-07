@@ -5,6 +5,8 @@ import {LibBit} from "solady/utils/LibBit.sol";
 import {LibRLP} from "solady/utils/LibRLP.sol";
 import {LibBitmap} from "solady/utils/LibBitmap.sol";
 import {LibBytes} from "solady/utils/LibBytes.sol";
+import {LibString} from "solady/utils/LibString.sol";
+import {LibTransient} from "solady/utils/LibTransient.sol";
 import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
 import {EIP712} from "solady/utils/EIP712.sol";
 import {ECDSA} from "solady/utils/ECDSA.sol";
@@ -31,6 +33,7 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
     using LibBitmap for LibBitmap.Bitmap;
     using LibStorage for LibStorage.Bump;
     using LibRLP for LibRLP.List;
+    using LibTransient for LibTransient.TBytes32;
 
     ////////////////////////////////////////////////////////////////////////
     // Data Structures
@@ -201,6 +204,14 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
     /// This constant is a pun for "chain ID 0".
     uint16 public constant MULTICHAIN_NONCE_PREFIX = 0xc1d0;
 
+    /// @dev A unique identifier to be passed into `upgradeHook(bytes32 previousVersion)`
+    /// via the transient storage slot at `_UPGRADE_HOOK_GUARD_TRANSIENT_SLOT`.
+    bytes32 internal constant _UPGRADE_HOOK_ID = keccak256("PORTO_DELEGATION_UPGRADE_HOOK_ID");
+
+    /// @dev This transient slot must be set to `_UPGRADE_HOOK_ID` before `upgradeHook` can be processed.
+    bytes32 internal constant _UPGRADE_HOOK_GUARD_TRANSIENT_SLOT =
+        bytes32(uint256(keccak256("_UPGRADE_HOOK_GUARD_TRANSIENT_SLOT")) - 1);
+
     /// @dev General capacity for enumerable sets,
     /// to prevent off-chain full enumeration from running out-of-gas.
     uint256 internal constant _CAP = 512;
@@ -323,6 +334,28 @@ contract Delegation is IDelegation, EIP712, GuardedExecutor {
     /// only a new EIP-7702 transaction can change the authority's logic.
     function upgradeProxyDelegation(address newImplementation) public virtual onlyThis {
         LibEIP7702.upgradeProxyDelegation(newImplementation);
+        (, string memory version) = _domainNameAndVersion();
+        // Using a dedicated guard makes the hook only callable via this function
+        // prevents direct self-calls which may accidentally use the wrong hook ID and version.
+        LibTransient.tBytes32(_UPGRADE_HOOK_GUARD_TRANSIENT_SLOT).set(_UPGRADE_HOOK_ID);
+        // We MUST use `this`, so that it uses the new implementation's `upgradeHook`.
+        require(this.upgradeHook(LibString.toSmallString(version)));
+    }
+
+    /// @dev For this very first version, the upgrade hook is just an no-op.
+    /// Provided to enable calling it via plain Solidity.
+    /// For future implementations, we will have an upgrade hook which can contain logic
+    /// to migrate storage on a case-by-case basis if needed.
+    /// If this hook is implemented to mutate storage,
+    /// it MUST check that `_UPGRADE_HOOK_GUARD_TRANSIENT_SLOT` is correctly set.
+    function upgradeHook(bytes32 previousVersion) external virtual onlyThis returns (bool) {
+        previousVersion = previousVersion; // Silence unused variable warning.
+        // Example of how we are supposed to load, check and clear the upgrade hook guard.
+        bytes32 hookId = LibTransient.tBytes32(_UPGRADE_HOOK_GUARD_TRANSIENT_SLOT).get();
+        require(hookId == _UPGRADE_HOOK_ID);
+        LibTransient.tBytes32(_UPGRADE_HOOK_GUARD_TRANSIENT_SLOT).clear();
+        // Always returns true for cheaper call success check (even in plain Solidity).
+        return true;
     }
 
     ////////////////////////////////////////////////////////////////////////
