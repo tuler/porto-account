@@ -172,6 +172,18 @@ contract Simulator {
         while (true) {
             gasUsed = _callEntryPointMemory(ep, false, 0, u);
 
+            // If the simulation failed, bubble up the full revert.
+            assembly ("memory-safe") {
+                if iszero(gasUsed) {
+                    let m := mload(0x40)
+                    returndatacopy(m, 0x00, returndatasize())
+                    // `PaymentError` is given special treatment here, as it comes from
+                    // the account not having enough funds, and cannot be recovered from,
+                    // since the paymentAmount will keep increasing in this loop.
+                    if eq(shr(224, mload(m)), 0xabab8fc9) { revert(m, 0x20) }
+                }
+            }
+
             if (gasUsed != 0) {
                 return (gasUsed, u.combinedGas);
             }
