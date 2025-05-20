@@ -63,6 +63,12 @@ contract BaseTest is SoladyTest {
         bytes32 keyHash;
     }
 
+    struct MultiSigKey {
+        Delegation.Key k;
+        uint256 threshold;
+        PassKey[] owners;
+    }
+
     struct DelegatedEOA {
         address eoa;
         uint256 privateKey;
@@ -120,6 +126,13 @@ contract BaseTest is SoladyTest {
         k.keyHash = _hash(k.k);
     }
 
+    function _randomKey() internal returns (Delegation.Key memory k) {
+        k.keyType = Delegation.KeyType(uint8(_bound(_random(), 0, 3)));
+        k.isSuperAdmin = _randomChance(2);
+        k.publicKey = abi.encode(address(_randomUniqueHashedAddress()));
+        k.expiry = 0;
+    }
+
     function _sig(DelegatedEOA memory d, EntryPoint.UserOp memory u)
         internal
         view
@@ -171,6 +184,26 @@ contract BaseTest is SoladyTest {
         revert("Unsupported");
     }
 
+    function _sig(MultiSigKey memory k, bytes32 digest) internal pure returns (bytes memory) {
+        return _multiSig(k, _hash(k.k), false, digest);
+    }
+
+    function _sig(MultiSigKey memory k, EntryPoint.UserOp memory u)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return _multiSig(k, _hash(k.k), false, ep.computeDigest(u));
+    }
+
+    function _sig(MultiSigKey memory k, bool prehash, bytes32 digest)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return _multiSig(k, _hash(k.k), prehash, digest);
+    }
+
     function _secp256r1Sig(uint256 privateKey, bytes32 keyHash, bytes32 digest)
         internal
         pure
@@ -204,6 +237,19 @@ contract BaseTest is SoladyTest {
     {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
         return abi.encodePacked(abi.encodePacked(r, s, v), keyHash, uint8(prehash ? 1 : 0));
+    }
+
+    function _multiSig(MultiSigKey memory k, bytes32 keyHash, bool preHash, bytes32 digest)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        bytes[] memory signatures = new bytes[](k.threshold);
+        for (uint256 i; i < k.threshold; ++i) {
+            signatures[i] = _sig(k.owners[i], digest);
+        }
+
+        return abi.encodePacked(abi.encode(signatures), keyHash, uint8(preHash ? 1 : 0));
     }
 
     function _estimateGasForEOAKey(EntryPoint.UserOp memory u)
@@ -248,6 +294,22 @@ contract BaseTest is SoladyTest {
         return _estimateGas(u);
     }
 
+    function _estimateGasForMultiSigKey(MultiSigKey memory k, EntryPoint.UserOp memory u)
+        internal
+        returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
+    {
+        return _estimateGas(
+            _EstimateGasParams({
+                u: u,
+                isPrePayment: true,
+                paymentPerGasPrecision: 0,
+                paymentPerGas: 1,
+                combinedGasIncrement: 110_000,
+                combinedGasVerificationOffset: 10_000 * k.threshold
+            })
+        );
+    }
+
     function _estimateGas(EntryPoint.UserOp memory u)
         internal
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
@@ -267,34 +329,40 @@ contract BaseTest is SoladyTest {
         vm.revertToStateAndDelete(snapshot);
     }
 
-    function _estimateGas(
-        EntryPoint.UserOp memory u,
-        bool isPrePayment,
-        uint8 paymentPerGasPrecision,
-        uint256 paymentPerGas,
-        uint256 combinedGasIncrement,
-        uint256 combinedGasVerificationOffset
-    ) internal returns (uint256 gExecute, uint256 gCombined, uint256 gUsed) {
-        uint256 snapshot = vm.snapshotState();
+    struct _EstimateGasParams {
+        EntryPoint.UserOp u;
+        bool isPrePayment;
+        uint8 paymentPerGasPrecision;
+        uint256 paymentPerGas;
+        uint256 combinedGasIncrement;
+        uint256 combinedGasVerificationOffset;
+    }
 
-        // Set the simulator to have max balance, so that it can run in state override mode.
-        // This is meant to mimic an offchain state override.
-        vm.deal(address(simulator), type(uint256).max);
+    function _estimateGas(_EstimateGasParams memory p)
+        internal
+        returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
+    {
+        {
+            uint256 snapshot = vm.snapshotState();
 
-        (gUsed, gCombined) = simulator.simulateV1Logs(
-            address(ep),
-            isPrePayment,
-            paymentPerGasPrecision,
-            paymentPerGas,
-            combinedGasIncrement,
-            combinedGasVerificationOffset,
-            abi.encode(u)
-        );
+            // Set the simulator to have max balance, so that it can run in state override mode.
+            // This is meant to mimic an offchain state override.
+            vm.deal(address(simulator), type(uint256).max);
+
+            (gUsed, gCombined) = simulator.simulateV1Logs(
+                address(ep),
+                p.isPrePayment,
+                p.paymentPerGasPrecision,
+                p.paymentPerGas,
+                p.combinedGasIncrement,
+                p.combinedGasVerificationOffset,
+                abi.encode(p.u)
+            );
+            vm.revertToStateAndDelete(snapshot);
+        }
 
         // gExecute > (100k + combinedGas) * 64/63
         gExecute = Math.mulDiv(gCombined + 110_000, 64, 63);
-
-        vm.revertToStateAndDelete(snapshot);
     }
 
     function _mint(address token, address to, uint256 amount) internal {

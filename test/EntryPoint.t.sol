@@ -9,6 +9,7 @@ import {MockPayerWithState} from "./utils/mocks/MockPayerWithState.sol";
 import {MockPayerWithSignature} from "./utils/mocks/MockPayerWithSignature.sol";
 import {IEntryPoint} from "../src/interfaces/IEntryPoint.sol";
 import {IDelegation} from "../src/interfaces/IDelegation.sol";
+import {MultiSigSigner} from "../src/MultiSigSigner.sol";
 
 contract EntryPointTest is BaseTest {
     struct _TestFullFlowTemps {
@@ -122,7 +123,7 @@ contract EntryPointTest is BaseTest {
         paymentToken.mint(d.eoa, 50 ether);
 
         _simulateExecute(
-            _SimulateExecuteParams({
+            _EstimateGasParams({
                 u: u,
                 isPrePayment: false,
                 paymentPerGasPrecision: 0,
@@ -188,7 +189,7 @@ contract EntryPointTest is BaseTest {
         u.signature = _sig(d, u);
 
         _simulateExecute(
-            _SimulateExecuteParams({
+            _EstimateGasParams({
                 u: u,
                 isPrePayment: false,
                 paymentPerGasPrecision: 0,
@@ -295,7 +296,7 @@ contract EntryPointTest is BaseTest {
         vm.expectRevert(bytes4(keccak256("PaymentError()")));
 
         _simulateExecute(
-            _SimulateExecuteParams({
+            _EstimateGasParams({
                 u: u,
                 isPrePayment: false,
                 paymentPerGasPrecision: 0,
@@ -432,16 +433,7 @@ contract EntryPointTest is BaseTest {
         }
     }
 
-    struct _SimulateExecuteParams {
-        EntryPoint.UserOp u;
-        bool isPrePayment;
-        uint8 paymentPerGasPrecision;
-        uint256 paymentPerGas;
-        uint256 combinedGasIncrement;
-        uint256 combinedGasVerificationOffset;
-    }
-
-    function _simulateExecute(_SimulateExecuteParams memory p)
+    function _simulateExecute(_EstimateGasParams memory p)
         internal
         returns (uint256 gUsed, uint256 gCombined)
     {
@@ -789,7 +781,7 @@ contract EntryPointTest is BaseTest {
 
         vm.expectRevert(bytes4(keccak256("Unauthorized()")));
         _simulateExecute(
-            _SimulateExecuteParams({
+            _EstimateGasParams({
                 u: u,
                 isPrePayment: false,
                 paymentPerGasPrecision: 0,
@@ -983,6 +975,171 @@ contract EntryPointTest is BaseTest {
             assertEq(ep.execute(abi.encode(u)), 0);
             assertEq(t.d.d.getNonce(0), u.nonce + 1);
             assertEq(_balanceOf(address(0), address(0xabcd)), 1 ether);
+        }
+    }
+
+    struct _TestMultiSigTemps {
+        DelegatedEOA d;
+        MultiSigSigner multiSigSigner;
+        uint256 numKeys;
+        MultiSigKey multiSigKey;
+    }
+
+    function testMultiSig(bytes32) public {
+        _TestMultiSigTemps memory t;
+        t.d = _randomEIP7702DelegatedEOA();
+
+        vm.deal(t.d.eoa, type(uint192).max);
+
+        t.multiSigSigner = new MultiSigSigner();
+        t.multiSigKey.k = Delegation.Key({
+            expiry: 0,
+            keyType: Delegation.KeyType.External,
+            isSuperAdmin: true,
+            publicKey: abi.encodePacked(
+                address(t.multiSigSigner), bytes12(uint96(_bound(_random(), 0, type(uint96).max)))
+            )
+        });
+
+        // Setup Phase
+        vm.startPrank(t.d.eoa);
+        t.d.d.authorize(t.multiSigKey.k);
+
+        t.numKeys = _bound(_random(), 0, 32);
+        t.numKeys = 3;
+        t.multiSigKey.threshold = _bound(_random(), 0, t.numKeys);
+
+        t.multiSigKey.owners = new PassKey[](t.numKeys);
+
+        bytes32[] memory ownerKeyHashes = new bytes32[](t.numKeys);
+
+        for (uint256 i; i < t.numKeys; ++i) {
+            PassKey memory passKey =
+                _randomChance(2) ? _randomSecp256k1PassKey() : _randomSecp256r1PassKey();
+            t.d.d.authorize(passKey.k);
+            t.multiSigKey.owners[i] = passKey;
+            ownerKeyHashes[i] = _hash(passKey.k);
+        }
+
+        ERC7821.Call[] memory calls = new ERC7821.Call[](1);
+        calls[0] = ERC7821.Call({
+            to: address(t.multiSigSigner),
+            value: 0,
+            data: abi.encodeWithSelector(
+                MultiSigSigner.initConfig.selector,
+                _hash(t.multiSigKey.k),
+                t.multiSigKey.threshold,
+                ownerKeyHashes
+            )
+        });
+
+        if (t.multiSigKey.threshold == 0) vm.expectRevert(bytes4(keccak256("InvalidThreshold()")));
+        t.d.d.execute(_ERC7821_BATCH_EXECUTION_MODE, abi.encode(calls));
+        if (t.multiSigKey.threshold == 0) return;
+
+        vm.stopPrank();
+
+        assertEq(t.d.d.keyCount(), t.numKeys + 1);
+
+        // Try to set config again
+        vm.startPrank(t.d.eoa);
+        vm.expectRevert(bytes4(keccak256("ConfigAlreadySet()")));
+        t.multiSigSigner.initConfig(_hash(t.multiSigKey.k), 5, ownerKeyHashes);
+        vm.stopPrank();
+
+        calls[0] = ERC7821.Call({
+            to: address(t.multiSigSigner),
+            value: 0,
+            data: abi.encodeWithSelector(
+                MultiSigSigner.addOwner.selector, _hash(t.multiSigKey.k), bytes32(_random())
+            )
+        });
+
+        vm.prank(t.d.eoa);
+        vm.expectRevert(bytes4(keccak256("InvalidKeyHash()")));
+        t.d.d.execute(_ERC7821_BATCH_EXECUTION_MODE, abi.encode(calls));
+
+        EntryPoint.UserOp memory u;
+        u.eoa = t.d.eoa;
+        u.nonce = t.d.d.getNonce(0);
+        u.executionData = abi.encode(calls);
+        u.signature = _sig(t.multiSigKey, bytes32(_random()));
+        (uint256 gExecute, uint256 gCombined,) = _estimateGasForMultiSigKey(t.multiSigKey, u);
+        u.combinedGas = gCombined;
+        u.signature = _sig(t.multiSigKey, u);
+
+        // Test unwrapAndValidateSignature
+        bytes32 digest = ep.computeDigest(u);
+        (bool isValid, bytes32 keyHash) =
+            t.d.d.unwrapAndValidateSignature(digest, _sig(t.multiSigKey, digest));
+
+        assertEq(isValid, true);
+        assertEq(keyHash, _hash(t.multiSigKey.k));
+
+        assertEq(ep.execute{gas: gExecute}(abi.encode(u)), 0);
+        (uint256 _threshold, bytes32[] memory o) =
+            t.multiSigSigner.getConfig(address(t.d.d), _hash(t.multiSigKey.k));
+
+        assertEq(o.length, t.multiSigKey.owners.length + 1);
+        assertEq(_threshold, t.multiSigKey.threshold);
+
+        // Test setThreshold
+        {
+            uint256 newThreshold = _bound(_random(), 0, t.multiSigKey.owners.length);
+            calls[0] = ERC7821.Call({
+                to: address(t.multiSigSigner),
+                value: 0,
+                data: abi.encodeWithSelector(
+                    MultiSigSigner.setThreshold.selector, _hash(t.multiSigKey.k), newThreshold
+                )
+            });
+
+            u.nonce = t.d.d.getNonce(0);
+            u.executionData = abi.encode(calls);
+            u.signature = _sig(t.multiSigKey, bytes32(_random()));
+            if (newThreshold == 0) {
+                vm.expectRevert(bytes4(keccak256("InvalidThreshold()")));
+            }
+
+            (gExecute, gCombined,) = _estimateGasForMultiSigKey(t.multiSigKey, u);
+
+            u.combinedGas = gCombined;
+            u.signature = _sig(t.multiSigKey, u);
+
+            if (newThreshold > 0) {
+                assertEq(ep.execute{gas: gExecute}(abi.encode(u)), 0);
+                (_threshold, o) = t.multiSigSigner.getConfig(address(t.d.d), _hash(t.multiSigKey.k));
+
+                assertEq(_threshold, newThreshold);
+                assertEq(o.length, t.multiSigKey.owners.length + 1);
+
+                t.multiSigKey.threshold = newThreshold;
+            }
+        }
+
+        // Test removeOwner
+        {
+            uint256 removeIndex = _bound(_random(), 0, o.length - 1);
+            calls[0] = ERC7821.Call({
+                to: address(t.multiSigSigner),
+                value: 0,
+                data: abi.encodeWithSelector(
+                    MultiSigSigner.removeOwner.selector, _hash(t.multiSigKey.k), o[removeIndex]
+                )
+            });
+
+            u.nonce = t.d.d.getNonce(0);
+            u.executionData = abi.encode(calls);
+            u.signature = _sig(t.multiSigKey, bytes32(_random()));
+            (gExecute, gCombined,) = _estimateGasForMultiSigKey(t.multiSigKey, u);
+            u.combinedGas = gCombined;
+            u.signature = _sig(t.multiSigKey, u);
+
+            assertEq(ep.execute{gas: gExecute}(abi.encode(u)), 0);
+            (_threshold, o) = t.multiSigSigner.getConfig(address(t.d.d), _hash(t.multiSigKey.k));
+
+            assertEq(o.length, t.multiSigKey.owners.length);
+            assertEq(_threshold, t.multiSigKey.threshold);
         }
     }
 }
