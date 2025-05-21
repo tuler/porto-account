@@ -15,21 +15,21 @@ import {GasBurnerLib} from "solady/utils/GasBurnerLib.sol";
 import {P256} from "solady/utils/P256.sol";
 import {LibSort} from "solady/utils/LibSort.sol";
 import {FixedPointMathLib as Math} from "solady/utils/FixedPointMathLib.sol";
-import {Delegation, MockDelegation} from "./utils/mocks/MockDelegation.sol";
-import {EntryPoint, MockEntryPoint} from "./utils/mocks/MockEntryPoint.sol";
+import {PortoAccount, MockAccount} from "./utils/mocks/MockAccount.sol";
+import {Orchestrator, MockOrchestrator} from "./utils/mocks/MockOrchestrator.sol";
 import {ERC20, MockPaymentToken} from "./utils/mocks/MockPaymentToken.sol";
-import {GuardedExecutor} from "../src/Delegation.sol";
+import {GuardedExecutor} from "../src/PortoAccount.sol";
 
-import {IEntryPoint} from "../src/interfaces/IEntryPoint.sol";
+import {IOrchestrator} from "../src/interfaces/IOrchestrator.sol";
 import {Simulator} from "../src/Simulator.sol";
 
 contract BaseTest is SoladyTest {
     using LibRLP for LibRLP.List;
 
-    MockEntryPoint ep;
+    MockOrchestrator oc;
     MockPaymentToken paymentToken;
-    address delegationImplementation;
-    MockDelegation delegation;
+    address accountImplementation;
+    MockAccount account;
     EIP7702Proxy eip7702Proxy;
     TargetFunctionPayload[] targetFunctionPayloads;
     Simulator simulator;
@@ -58,13 +58,13 @@ contract BaseTest is SoladyTest {
         0xff00000000000000000000000000000000000000000000000000000000000000;
 
     struct PassKey {
-        Delegation.Key k;
+        PortoAccount.Key k;
         uint256 privateKey;
         bytes32 keyHash;
     }
 
     struct MultiSigKey {
-        Delegation.Key k;
+        PortoAccount.Key k;
         uint256 threshold;
         PassKey[] owners;
     }
@@ -72,16 +72,16 @@ contract BaseTest is SoladyTest {
     struct DelegatedEOA {
         address eoa;
         uint256 privateKey;
-        MockDelegation d;
+        MockAccount d;
     }
 
     function setUp() public virtual {
-        ep = new MockEntryPoint(address(this));
+        oc = new MockOrchestrator(address(this));
         paymentToken = new MockPaymentToken();
-        delegationImplementation = address(new MockDelegation(address(ep)));
+        accountImplementation = address(new MockAccount(address(oc)));
         eip7702Proxy =
-            EIP7702Proxy(payable(LibEIP7702.deployProxy(delegationImplementation, address(this))));
-        delegation = MockDelegation(payable(eip7702Proxy));
+            EIP7702Proxy(payable(LibEIP7702.deployProxy(accountImplementation, address(this))));
+        account = MockAccount(payable(eip7702Proxy));
         simulator = new Simulator();
 
         _etchP256Verifier();
@@ -92,16 +92,16 @@ contract BaseTest is SoladyTest {
     }
 
     function _setEIP7702Delegation(address eoa) internal {
-        vm.etch(eoa, abi.encodePacked(hex"ef0100", address(delegation)));
+        vm.etch(eoa, abi.encodePacked(hex"ef0100", address(account)));
     }
 
     function _randomEIP7702DelegatedEOA() internal returns (DelegatedEOA memory d) {
         (d.eoa, d.privateKey) = _randomUniqueSigner();
         _setEIP7702Delegation(d.eoa);
-        d.d = MockDelegation(payable(d.eoa));
+        d.d = MockAccount(payable(d.eoa));
     }
 
-    function _hash(Delegation.Key memory k) internal pure returns (bytes32) {
+    function _hash(PortoAccount.Key memory k) internal pure returns (bytes32) {
         return keccak256(abi.encode(uint8(k.keyType), keccak256(k.publicKey)));
     }
 
@@ -111,7 +111,7 @@ contract BaseTest is SoladyTest {
     }
 
     function _randomSecp256r1PassKey() internal returns (PassKey memory k) {
-        k.k.keyType = Delegation.KeyType.P256;
+        k.k.keyType = PortoAccount.KeyType.P256;
         k.privateKey = _randomUniform() & type(uint192).max;
         (uint256 x, uint256 y) = vm.publicKeyP256(k.privateKey);
         k.k.publicKey = abi.encode(x, y);
@@ -119,38 +119,31 @@ contract BaseTest is SoladyTest {
     }
 
     function _randomSecp256k1PassKey() internal returns (PassKey memory k) {
-        k.k.keyType = Delegation.KeyType.Secp256k1;
+        k.k.keyType = PortoAccount.KeyType.Secp256k1;
         address addr;
         (addr, k.privateKey) = _randomUniqueSigner();
         k.k.publicKey = abi.encode(addr);
         k.keyHash = _hash(k.k);
     }
 
-    function _randomKey() internal returns (Delegation.Key memory k) {
-        k.keyType = Delegation.KeyType(uint8(_bound(_random(), 0, 3)));
-        k.isSuperAdmin = _randomChance(2);
-        k.publicKey = abi.encode(address(_randomUniqueHashedAddress()));
-        k.expiry = 0;
-    }
-
-    function _sig(DelegatedEOA memory d, EntryPoint.UserOp memory u)
+    function _sig(DelegatedEOA memory d, Orchestrator.Intent memory i)
         internal
         view
         returns (bytes memory)
     {
-        return _eoaSig(d.privateKey, u);
+        return _eoaSig(d.privateKey, i);
     }
 
     function _sig(DelegatedEOA memory d, bytes32 digest) internal pure returns (bytes memory) {
         return _eoaSig(d.privateKey, digest);
     }
 
-    function _eoaSig(uint256 privateKey, EntryPoint.UserOp memory u)
+    function _eoaSig(uint256 privateKey, Orchestrator.Intent memory i)
         internal
         view
         returns (bytes memory)
     {
-        return _eoaSig(privateKey, ep.computeDigest(u));
+        return _eoaSig(privateKey, oc.computeDigest(i));
     }
 
     function _eoaSig(uint256 privateKey, bytes32 digest) internal pure returns (bytes memory) {
@@ -158,12 +151,12 @@ contract BaseTest is SoladyTest {
         return abi.encodePacked(r, s, v);
     }
 
-    function _sig(PassKey memory k, EntryPoint.UserOp memory u)
+    function _sig(PassKey memory k, Orchestrator.Intent memory i)
         internal
         view
         returns (bytes memory)
     {
-        return _sig(k, false, ep.computeDigest(u));
+        return _sig(k, false, oc.computeDigest(i));
     }
 
     function _sig(PassKey memory k, bytes32 digest) internal pure returns (bytes memory) {
@@ -175,10 +168,10 @@ contract BaseTest is SoladyTest {
         pure
         returns (bytes memory)
     {
-        if (k.k.keyType == Delegation.KeyType.P256) {
+        if (k.k.keyType == PortoAccount.KeyType.P256) {
             return _secp256r1Sig(k.privateKey, k.keyHash, prehash, digest);
         }
-        if (k.k.keyType == Delegation.KeyType.Secp256k1) {
+        if (k.k.keyType == PortoAccount.KeyType.Secp256k1) {
             return _secp256k1Sig(k.privateKey, k.keyHash, prehash, digest);
         }
         revert("Unsupported");
@@ -188,12 +181,12 @@ contract BaseTest is SoladyTest {
         return _multiSig(k, _hash(k.k), false, digest);
     }
 
-    function _sig(MultiSigKey memory k, EntryPoint.UserOp memory u)
+    function _sig(MultiSigKey memory k, Orchestrator.Intent memory u)
         internal
         view
         returns (bytes memory)
     {
-        return _multiSig(k, _hash(k.k), false, ep.computeDigest(u));
+        return _multiSig(k, _hash(k.k), false, oc.computeDigest(u));
     }
 
     function _sig(MultiSigKey memory k, bool prehash, bytes32 digest)
@@ -252,49 +245,49 @@ contract BaseTest is SoladyTest {
         return abi.encodePacked(abi.encode(signatures), keyHash, uint8(preHash ? 1 : 0));
     }
 
-    function _estimateGasForEOAKey(EntryPoint.UserOp memory u)
+    function _estimateGasForEOAKey(Orchestrator.Intent memory i)
         internal
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
     {
         (uint8 v, bytes32 r, bytes32 s) =
             vm.sign(uint128(_randomUniform()), bytes32(_randomUniform()));
-        u.signature = abi.encodePacked(r, s, v);
-        return _estimateGas(u);
+        i.signature = abi.encodePacked(r, s, v);
+        return _estimateGas(i);
     }
 
-    function _estimateGas(PassKey memory k, EntryPoint.UserOp memory u)
+    function _estimateGas(PassKey memory k, Orchestrator.Intent memory i)
         internal
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
     {
-        if (k.k.keyType == Delegation.KeyType.P256) {
-            return _estimateGasForSecp256r1Key(k.keyHash, u);
+        if (k.k.keyType == PortoAccount.KeyType.P256) {
+            return _estimateGasForSecp256r1Key(k.keyHash, i);
         }
-        if (k.k.keyType == Delegation.KeyType.Secp256k1) {
-            return _estimateGasForSecp256k1Key(k.keyHash, u);
+        if (k.k.keyType == PortoAccount.KeyType.Secp256k1) {
+            return _estimateGasForSecp256k1Key(k.keyHash, i);
         }
         revert("Unsupported");
     }
 
-    function _estimateGasForSecp256k1Key(bytes32 keyHash, EntryPoint.UserOp memory u)
+    function _estimateGasForSecp256k1Key(bytes32 keyHash, Orchestrator.Intent memory i)
         internal
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
     {
         (uint8 v, bytes32 r, bytes32 s) =
             vm.sign(uint128(_randomUniform()), bytes32(_randomUniform()));
-        u.signature = abi.encodePacked(abi.encodePacked(r, s, v), keyHash, uint8(0));
-        return _estimateGas(u);
+        i.signature = abi.encodePacked(abi.encodePacked(r, s, v), keyHash, uint8(0));
+        return _estimateGas(i);
     }
 
-    function _estimateGasForSecp256r1Key(bytes32 keyHash, EntryPoint.UserOp memory u)
+    function _estimateGasForSecp256r1Key(bytes32 keyHash, Orchestrator.Intent memory i)
         internal
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
     {
-        u.signature = abi.encodePacked(keccak256("a"), keccak256("b"), keyHash, uint8(0));
+        i.signature = abi.encodePacked(keccak256("a"), keccak256("b"), keyHash, uint8(0));
 
-        return _estimateGas(u);
+        return _estimateGas(i);
     }
 
-    function _estimateGasForMultiSigKey(MultiSigKey memory k, EntryPoint.UserOp memory u)
+    function _estimateGasForMultiSigKey(MultiSigKey memory k, Orchestrator.Intent memory u)
         internal
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
     {
@@ -310,27 +303,26 @@ contract BaseTest is SoladyTest {
         );
     }
 
-    function _estimateGas(EntryPoint.UserOp memory u)
+    function _estimateGas(Orchestrator.Intent memory i)
         internal
         returns (uint256 gExecute, uint256 gCombined, uint256 gUsed)
     {
         uint256 snapshot = vm.snapshotState();
-
-        // Set the simulator to have max balance, so that it can run in state override mode.
-        // This is meant to mimic an offchain state override.
         vm.deal(address(simulator), type(uint256).max);
 
         (gUsed, gCombined) =
-            simulator.simulateV1Logs(address(ep), true, 0, 1, 11_000, 10_000, abi.encode(u));
+            simulator.simulateV1Logs(address(oc), true, 0, 1, 11_000, 10_000, abi.encode(i));
 
         // gExecute > (100k + combinedGas) * 64/63
         gExecute = Math.mulDiv(gCombined + 110_000, 64, 63);
 
         vm.revertToStateAndDelete(snapshot);
+
+        gExecute = Math.mulDiv(gCombined + 110_000, 64, 63);
     }
 
     struct _EstimateGasParams {
-        EntryPoint.UserOp u;
+        Orchestrator.Intent u;
         bool isPrePayment;
         uint8 paymentPerGasPrecision;
         uint256 paymentPerGas;
@@ -350,7 +342,7 @@ contract BaseTest is SoladyTest {
             vm.deal(address(simulator), type(uint256).max);
 
             (gUsed, gCombined) = simulator.simulateV1Logs(
-                address(ep),
+                address(oc),
                 p.isPrePayment,
                 p.paymentPerGasPrecision,
                 p.paymentPerGas,
@@ -499,7 +491,7 @@ contract BaseTest is SoladyTest {
         vm.etch(address(0x100), verifierBytecode);
     }
 
-    function _computePREPDigest(Delegation.Call[] memory calls) internal pure returns (bytes32) {
+    function _computePREPDigest(PortoAccount.Call[] memory calls) internal pure returns (bytes32) {
         bytes32[] memory a = new bytes32[](calls.length);
         for (uint256 i; i < calls.length; ++i) {
             a[i] = keccak256(
@@ -514,8 +506,8 @@ contract BaseTest is SoladyTest {
         return keccak256(abi.encodePacked(a));
     }
 
-    function _minePREP(bytes32 digest) internal returns (bytes32 saltAndDelegation, address eoa) {
-        address dele = address(delegation);
+    function _minePREP(bytes32 digest) internal returns (bytes32 saltAndAccount, address eoa) {
+        address dele = address(account);
         bytes32 saltRandomnessSeed = bytes32(_randomUniform());
         bytes32 h = keccak256(abi.encodePacked(hex"05", LibRLP.p(0).p(dele).p(0).encode()));
         uint96 salt;
@@ -528,6 +520,6 @@ contract BaseTest is SoladyTest {
             if (eoa != address(0)) break;
             saltRandomnessSeed = EfficientHashLib.hash(saltRandomnessSeed);
         }
-        saltAndDelegation = bytes32((uint256(salt) << 160) | uint160(dele));
+        saltAndAccount = bytes32((uint256(salt) << 160) | uint160(dele));
     }
 }

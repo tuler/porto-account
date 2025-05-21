@@ -9,18 +9,18 @@ contract LibPREPTest is SoladyTest {
     function testDeployAll() public {
         DeployAll deployAll = new DeployAll();
 
-        address entryPoint = deployAll.entryPoint();
+        address orchestrator = deployAll.orchestrator();
 
         assertEq(
-            Delegation(payable(deployAll.delegationImplementation())).ENTRY_POINT(), entryPoint
+            PortoAccount(payable(deployAll.accountImplementation())).ORCHESTRATOR(), orchestrator
         );
 
         address eoa = _randomUniqueHashedAddress();
 
-        vm.etch(eoa, abi.encodePacked(hex"ef0100", deployAll.delegationImplementation()));
-        assertEq(Delegation(payable(eoa)).ENTRY_POINT(), entryPoint);
+        vm.etch(eoa, abi.encodePacked(hex"ef0100", deployAll.accountImplementation()));
+        assertEq(PortoAccount(payable(eoa)).ORCHESTRATOR(), orchestrator);
 
-        vm.etch(eoa, abi.encodePacked(hex"ef0100", deployAll.delegationProxy()));
-        assertEq(Delegation(payable(eoa)).ENTRY_POINT(), entryPoint);
+        vm.etch(eoa, abi.encodePacked(hex"ef0100", deployAll.accountProxy()));
+        assertEq(PortoAccount(payable(eoa)).ORCHESTRATOR(), orchestrator);
     }
 }
