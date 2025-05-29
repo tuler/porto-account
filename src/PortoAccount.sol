@@ -20,7 +20,6 @@ import {LibEIP7702} from "solady/accounts/LibEIP7702.sol";
 import {LibERC7579} from "solady/accounts/LibERC7579.sol";
 import {GuardedExecutor} from "./GuardedExecutor.sol";
 import {LibNonce} from "./libraries/LibNonce.sol";
-import {LibPREP} from "./libraries/LibPREP.sol";
 import {TokenTransferLib} from "./libraries/TokenTransferLib.sol";
 import {LibTStack} from "./libraries/LibTStack.sol";
 import {IPortoAccount} from "./interfaces/IPortoAccount.sol";
@@ -78,8 +77,6 @@ contract PortoAccount is IPortoAccount, EIP712, GuardedExecutor {
     struct AccountStorage {
         /// @dev The label.
         LibBytes.BytesStorage label;
-        /// @dev The `r` value for the secp256k1 curve to show that this contract is a PREP.
-        bytes32 rPREP;
         /// @dev Mapping for 4337-style 2D nonce sequences.
         /// Each nonce has the following bit layout:
         /// - Upper 192 bits are used for the `seqKey` (sequence key).
@@ -125,9 +122,6 @@ contract PortoAccount is IPortoAccount, EIP712, GuardedExecutor {
 
     /// @dev The `opData` is too short.
     error OpDataError();
-
-    /// @dev The PREP `initData` is invalid.
-    error InvalidPREP();
 
     /// @dev The `keyType` cannot be super admin.
     error KeyTypeCannotBeSuperAdmin();
@@ -451,16 +445,6 @@ contract PortoAccount is IPortoAccount, EIP712, GuardedExecutor {
         return isMultichain ? _hashTypedDataSansChainId(structHash) : _hashTypedData(structHash);
     }
 
-    /// @dev Returns the `r` value for initializing the PREP.
-    function rPREP() public view virtual returns (bytes32) {
-        return _getAccountStorage().rPREP;
-    }
-
-    /// @dev Returns if the compact PREP signature is valid.
-    function isPREP() public view virtual returns (bool) {
-        return LibPREP.isPREP(address(this), _getAccountStorage().rPREP);
-    }
-
     /// @dev Returns if the signature is valid, along with its `keyHash`.
     /// The `signature` is a wrapped signature, given by
     /// `abi.encodePacked(bytes(innerSignature), bytes32(keyHash), bool(prehash))`.
@@ -598,6 +582,7 @@ contract PortoAccount is IPortoAccount, EIP712, GuardedExecutor {
     }
 
     /// @dev Pays `paymentAmount` of `paymentToken` to the `paymentRecipient`.
+
     function pay(
         uint256 paymentAmount,
         bytes32 keyHash,
@@ -659,54 +644,6 @@ contract PortoAccount is IPortoAccount, EIP712, GuardedExecutor {
 
         // Done to avoid compiler warnings.
         intentDigest = intentDigest;
-    }
-
-    /// @dev Initializes the PREP.
-    /// If already initialized, early returns true.
-    /// `initData` is encoded using ERC7821 style batch execution encoding.
-    /// (ERC7821 is a variant of ERC7579).
-    /// `abi.encode(calls, abi.encodePacked(bytes32(saltAndAccount)))`,
-    /// where `calls` is of type `Call[]`,
-    /// and `saltAndAccount` is `bytes32((uint256(salt) << 160) | uint160(account))`.
-    function initializePREP(bytes calldata initData) public virtual returns (bool) {
-        // We can omit the check for `msg.sender == ORCHESTRATOR`,
-        // having a correct `initData` will be sufficient.
-        AccountStorage storage $ = _getAccountStorage();
-        if ($.rPREP != 0) return true;
-
-        // Compute the digest of the calls in `initData`.
-        (bytes32[] calldata pointers, bytes calldata opData) =
-            LibERC7579.decodeBatchAndOpData(initData);
-        bytes32[] memory a = EfficientHashLib.malloc(pointers.length);
-        for (uint256 i; i < pointers.length; ++i) {
-            (address target, uint256 value, bytes calldata data) =
-                LibERC7579.getExecution(pointers, i);
-            a.set(
-                i,
-                EfficientHashLib.hash(
-                    CALL_TYPEHASH,
-                    bytes32(uint256(uint160(target))),
-                    bytes32(value),
-                    EfficientHashLib.hashCalldata(data)
-                )
-            );
-        }
-        // Arguments are `(address target, bytes32 digest, bytes32 saltAndAccount)`.
-        bytes32 r = LibPREP.rPREP(address(this), a.hash(), LibBytes.loadCalldata(opData, 0x00));
-        // If `r == 0`, it means that `address(this)` is not a valid PREP address.
-        // Also, add in a bounds check just to be extra safe.
-        if (LibBit.or(opData.length < 0x20, r == 0)) revert InvalidPREP();
-        $.rPREP = r;
-
-        // Use assembly to reinterpret cast into `Call[]`.
-        Call[] calldata calls;
-        assembly ("memory-safe") {
-            calls.length := pointers.length
-            calls.offset := pointers.offset
-        }
-        _execute(calls, bytes32(0));
-
-        return true;
     }
 
     ////////////////////////////////////////////////////////////////////////
@@ -791,6 +728,6 @@ contract PortoAccount is IPortoAccount, EIP712, GuardedExecutor {
         returns (string memory name, string memory version)
     {
         name = "PortoAccount";
-        version = "0.2.0";
+        version = "0.3.0";
     }
 }
