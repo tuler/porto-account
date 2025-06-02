@@ -1,0 +1,24 @@
+name = "porto-account"
+version = "<%= package.version %>"
+
+[var.Settings]
+pauser = "<%= zeroAddress %>"
+admin = "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720"
+
+[deploy.AccountRegistry]
+artifact = "AccountRegistry"
+
+[deploy.Orchestrator]
+artifact = "Orchestrator"
+args = ["<%= settings.pauser %>"]
+
+[deploy.Account]
+artifact = "PortoAccount"
+args = ["<%= contracts.Orchestrator.address %>"]
+
+[deploy.AccountProxy]
+artifact = "EIP7702Proxy"
+args = ["<%= contracts.Account.address %>", "<%= settings.admin  %>"]
+
+[deploy.Simulator]
+artifact = "Simulator"
