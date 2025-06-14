@@ -362,4 +362,103 @@ contract AccountTest is BaseTest {
             if success { revert(0, 0) }
         }
     }
+
+    function testCrossChainKeyPreCallsAuthorization() public {
+        // Setup Keys
+        PassKey memory adminKey = _randomSecp256k1PassKey();
+        adminKey.k.isSuperAdmin = true;
+
+        PassKey memory newKey = _randomPassKey();
+        newKey.k.isSuperAdmin = false;
+
+        // Setup ephemeral EOA (simulates EIP-7702 delegation)
+        uint256 ephemeralPK = _randomPrivateKey();
+        address payable eoaAddress = payable(vm.addr(ephemeralPK));
+        address impl = accountImplementation;
+
+        paymentToken.mint(eoaAddress, 2 ** 128 - 1);
+
+        // === PREPARE CROSS-CHAIN PRE-CALLS ===
+        // These pre-calls will be used on multiple chains with multichain nonces
+
+        // Pre-call 1: Initialize admin key using ephemeral EOA signature
+        Orchestrator.SignedCall memory pInit;
+        {
+            ERC7821.Call[] memory initCalls = new ERC7821.Call[](1);
+            initCalls[0].data = abi.encodeWithSelector(IthacaAccount.authorize.selector, adminKey.k);
+
+            pInit.eoa = eoaAddress;
+            pInit.executionData = abi.encode(initCalls);
+            pInit.nonce = (0xc1d0 << 240) | (1 << 64); // Multichain nonce
+            pInit.signature = _eoaSig(ephemeralPK, oc.computeDigest(pInit));
+        }
+
+        // Pre-call 2: Authorize new key using admin key
+        Orchestrator.SignedCall memory pAuth;
+        {
+            ERC7821.Call[] memory authCalls = new ERC7821.Call[](1);
+            authCalls[0].data = abi.encodeWithSelector(IthacaAccount.authorize.selector, newKey.k);
+
+            pAuth.eoa = eoaAddress;
+            pAuth.executionData = abi.encode(authCalls);
+            pAuth.nonce = (0xc1d0 << 240) | (2 << 64); // Multichain nonce
+            pAuth.signature = _sig(adminKey, oc.computeDigest(pAuth));
+        }
+
+        // Prepare main Intent structure (will be reused with same pre-calls)
+        Orchestrator.Intent memory baseIntent;
+        baseIntent.eoa = eoaAddress;
+        baseIntent.paymentToken = address(paymentToken);
+        baseIntent.prePaymentAmount = _bound(_random(), 0, 2 ** 32 - 1);
+        baseIntent.prePaymentMaxAmount = baseIntent.prePaymentAmount;
+        baseIntent.totalPaymentAmount = baseIntent.prePaymentAmount;
+        baseIntent.totalPaymentMaxAmount = baseIntent.prePaymentMaxAmount;
+        baseIntent.combinedGas = 10000000;
+
+        // Encode the pre-calls once (to be reused on both chains)
+        baseIntent.encodedPreCalls = new bytes[](2);
+        baseIntent.encodedPreCalls[0] = abi.encode(pInit);
+        baseIntent.encodedPreCalls[1] = abi.encode(pAuth);
+
+        // Main execution (empty for this test)
+        ERC7821.Call[] memory calls = new ERC7821.Call[](0);
+        baseIntent.executionData = abi.encode(calls);
+
+        // Take a snapshot before any chain-specific operations
+        uint256 initialSnapshot = vm.snapshot();
+
+        // === Chain 1 Execution ===
+        vm.chainId(1);
+        vm.etch(eoaAddress, abi.encodePacked(hex"ef0100", impl));
+
+        // Use the prepared pre-calls on chain 1
+        Orchestrator.Intent memory u1 = baseIntent;
+        u1.nonce = (0xc1d0 << 240) | 0; // Multichain nonce for main intent
+        u1.signature = _sig(adminKey, u1);
+
+        // Execute on chain 1 - should succeed
+        assertEq(oc.execute(false, abi.encode(u1)), 0, "Execution should succeed on chain 1");
+
+        // Verify keys were added on chain 1
+        uint256 keysCount1 = IthacaAccount(eoaAddress).keyCount();
+        assertEq(keysCount1, 2, "Both keys should be added on chain 1");
+
+        // === Reset State and Switch to Chain 137 ===
+        vm.revertTo(initialSnapshot);
+        vm.clearMockedCalls();
+        paymentToken.mint(eoaAddress, 2 ** 128 - 1);
+
+        // === Chain 137 Execution ===
+        vm.chainId(137);
+        vm.etch(eoaAddress, abi.encodePacked(hex"ef0100", impl));
+
+        // Execution should succeed due to multichain nonce in pre-calls
+        assertEq(
+            oc.execute(false, abi.encode(baseIntent)), 0, "Should succeed due to multichain nonce"
+        );
+
+        // Verify keys were added on chain 137
+        uint256 keysCount137 = IthacaAccount(eoaAddress).keyCount();
+        assertEq(keysCount137, 2, "Keys should be added on chain 137");
+    }
 }
